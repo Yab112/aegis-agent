@@ -106,7 +106,7 @@ python-multipart==0.0.20
 python-stdnum==1.19
 python-ulid==1.1.0
 pytz==2023.3.post1
-pywin32==311
+pywin32==311; sys_platform == "win32"
 PyYAML==6.0.2
 pyzmq==26.2.0
 redis==4.6.0
@@ -141,6 +141,11 @@ uritemplate==4.2.0
 urllib3==1.26.16
 uvicorn==0.37.0
 hypercorn>=0.17.0
+fastapi>=0.115.0
+langgraph>=0.2.0
+langchain-core>=0.3.0
+supabase>=2.0.0
+tenacity>=8.2.0
 virtualenv==20.26.6
 watchdog==5.0.3
 wcwidth==0.2.13
