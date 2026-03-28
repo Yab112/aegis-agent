@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Aegis chat — API test</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --text: #e7ecf3;
+      --muted: #8b98a5;
+      --accent: #3d8bfd;
+      --user: #243044;
+      --bot: #152028;
+      --err: #f87171;
+      --ok: #4ade80;
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
+      display: flex; flex-direction: column; align-items: center;
+      padding: 1.25rem;
+    }
+    h1 { font-size: 1.15rem; font-weight: 600; margin: 0 0 0.5rem; }
+    p.sub { color: var(--muted); font-size: 0.85rem; margin: 0 0 1rem; max-width: 42rem; text-align: center; }
+    .bar {
+      display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center;
+      width: 100%; max-width: 42rem; margin-bottom: 0.75rem;
+    }
+    .bar label { font-size: 0.75rem; color: var(--muted); }
+    .bar input[type="text"] {
+      flex: 1; min-width: 12rem; padding: 0.45rem 0.6rem;
+      border: 1px solid #2d3a4d; border-radius: 6px;
+      background: var(--panel); color: var(--text);
+    }
+    .log {
+      width: 100%; max-width: 42rem; flex: 1; min-height: 280px; max-height: min(60vh, 520px);
+      overflow-y: auto; border: 1px solid #2d3a4d; border-radius: 10px;
+      padding: 0.75rem; background: var(--panel);
+    }
+    .msg { margin-bottom: 0.75rem; padding: 0.65rem 0.85rem; border-radius: 8px; font-size: 0.92rem; line-height: 1.45; white-space: pre-wrap; }
+    .msg.user { background: var(--user); margin-left: 1.5rem; }
+    .msg.bot { background: var(--bot); margin-right: 1.5rem; border: 1px solid #243244; }
+    .msg.meta { font-size: 0.75rem; color: var(--muted); background: transparent; border: 1px dashed #2d3a4d; }
+    .row {
+      width: 100%; max-width: 42rem; display: flex; gap: 0.5rem; margin-top: 0.75rem;
+    }
+    textarea {
+      flex: 1; min-height: 3rem; resize: vertical; padding: 0.6rem 0.75rem;
+      border: 1px solid #2d3a4d; border-radius: 8px;
+      background: #121a24; color: var(--text); font: inherit;
+    }
+    button {
+      padding: 0.6rem 1rem; border: none; border-radius: 8px;
+      background: var(--accent); color: #fff; font-weight: 600; cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .status { font-size: 0.8rem; margin-top: 0.5rem; color: var(--muted); }
+    .status.err { color: var(--err); }
+    .status.ok { color: var(--ok); }
+  </style>
+</head>
+<body>
+  <h1>Aegis — chat API tester</h1>
+  <p class="sub">
+    Open this page from the API origin so CORS is happy:
+    <strong id="here"></strong>
+  </p>
+  <div class="bar">
+    <label>API base <input type="text" id="base" value="http://127.0.0.1:8000" autocomplete="off" /></label>
+    <label>session_id <input type="text" id="sid" placeholder="(auto from last reply)" autocomplete="off" /></label>
+  </div>
+  <div class="log" id="log" aria-live="polite"></div>
+  <div class="row">
+    <textarea id="q" placeholder="Message… e.g. When is Yabibal free for a call?"></textarea>
+    <button type="button" id="send">Send</button>
+  </div>
+  <div class="status" id="status"></div>
+
+  <script>
+    const log = document.getElementById("log");
+    const baseEl = document.getElementById("base");
+    const sidEl = document.getElementById("sid");
+    const qEl = document.getElementById("q");
+    const sendBtn = document.getElementById("send");
+    const statusEl = document.getElementById("status");
+    document.getElementById("here").textContent = window.location.origin + window.location.pathname;
+
+    function addMsg(cls, text) {
+      const d = document.createElement("div");
+      d.className = "msg " + cls;
+      d.textContent = text;
+      log.appendChild(d);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    async function send() {
+      const base = baseEl.value.replace(/\/$/, "");
+      const message = qEl.value.trim();
+      if (!message) return;
+      statusEl.textContent = "";
+      statusEl.className = "status";
+      sendBtn.disabled = true;
+
+      let sessionId = sidEl.value.trim() || null;
+      addMsg("user", message);
+      qEl.value = "";
+
+      try {
+        const body = { message };
+        if (sessionId) body.session_id = sessionId;
+        const r = await fetch(base + "/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          const detail = data.detail != null ? (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)) : r.statusText;
+          throw new Error(detail || "Request failed");
+        }
+        sidEl.value = data.session_id || "";
+        addMsg("bot", data.response || "(empty response)");
+        const meta = ["intent: " + (data.intent ?? "—"), "sources: " + JSON.stringify(data.sources || [])].join("\n");
+        addMsg("meta", meta);
+        statusEl.textContent = "OK " + r.status;
+        statusEl.className = "status ok";
+      } catch (e) {
+        addMsg("meta", "Error: " + e.message);
+        statusEl.textContent = e.message;
+        statusEl.className = "status err";
+      } finally {
+        sendBtn.disabled = false;
+      }
+    }
+
+    sendBtn.addEventListener("click", send);
+    qEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        send();
+      }
+    });
+  </script>
+</body>
+</html>

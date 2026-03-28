@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "hooks": {
+    "afterMCPExecution": [
+      {
+        "command": "powershell -ExecutionPolicy Bypass -File .cursor/scripts/ace_track_mcp.ps1"
+      }
+    ],
+    "afterShellExecution": [
+      {
+        "command": "powershell -ExecutionPolicy Bypass -File .cursor/scripts/ace_track_shell.ps1"
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "powershell -ExecutionPolicy Bypass -File .cursor/scripts/ace_track_response.ps1"
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": "powershell -ExecutionPolicy Bypass -File .cursor/scripts/ace_track_edit.ps1"
+      }
+    ],
+    "stop": [
+      {
+        "command": "powershell -ExecutionPolicy Bypass -File .cursor/scripts/ace_stop_hook.ps1"
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+# Local deploy test: build image + run API with your real secrets from .env
+#
+#   docker compose up --build
+#
+# Then: http://127.0.0.1:8000/health  and  http://127.0.0.1:8000/chat-ui
+#
+# .env is mounted at runtime (not baked into the image).
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      PORT: "8000"
+    restart: unless-stopped
