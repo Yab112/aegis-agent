@@ -1,0 +1,40 @@
+name: Blog draft (scheduled)
+
+on:
+  schedule:
+    # Monday & Friday 09:00 UTC — adjust as needed
+    - cron: "0 9 * * 1,5"
+  workflow_dispatch:
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate blog draft
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          OWNER_NAME: ${{ secrets.OWNER_NAME }}
+          PORTFOLIO_URL: ${{ secrets.PORTFOLIO_URL }}
+          BLOG_DEFAULT_OG_IMAGE: ${{ secrets.BLOG_DEFAULT_OG_IMAGE }}
+        run: python scripts/blog_draft.py
+
+      - name: Report success
+        if: success()
+        run: echo "Blog draft job finished (see logs for inserted vs skipped)."

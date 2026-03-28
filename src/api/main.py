@@ -13,6 +13,8 @@ from src.api.logging_config import (
     configure_logging,
     write_aegis_access_line,
 )
+from src.api.blog_internal import router as blog_internal_router
+from src.api.blog_routes import router as blog_public_router
 from src.api.routes import router
 
 settings = get_settings()
@@ -55,6 +57,8 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(blog_public_router)
+app.include_router(blog_internal_router)
 
 _PUBLIC = Path(__file__).resolve().parents[2] / "public"
 _CHAT_HTML = _PUBLIC / "chat.html"
@@ -76,6 +80,8 @@ def root():
         "docs": "/docs",
         "health": "/health",
         "chat_api": "POST /chat",
+        "blog_api": "GET /blog, GET /blog/{slug}",
+        "blog_internal": "POST /internal/blog/generate-draft (auth required)",
     }
 
 
