@@ -1,9 +1,10 @@
+# Schedule: using every-20-min cron for verification. When stable, replace the cron line
+# below with:  cron: "0 9 * * 1,5"   (Monday & Friday 09:00 UTC)
 name: Blog draft (scheduled)
 
 on:
   schedule:
-    # Monday & Friday 09:00 UTC — adjust as needed
-    - cron: "0 9 * * 1,5"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -33,6 +34,7 @@ jobs:
           OWNER_NAME: ${{ secrets.OWNER_NAME }}
           PORTFOLIO_URL: ${{ secrets.PORTFOLIO_URL }}
           BLOG_DEFAULT_OG_IMAGE: ${{ secrets.BLOG_DEFAULT_OG_IMAGE }}
+          BLOG_MAX_OUTPUT_TOKENS: "8192"
         run: python scripts/blog_draft.py
 
       - name: Report success
