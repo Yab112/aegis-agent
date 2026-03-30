@@ -32,27 +32,37 @@ Respond with ONLY valid JSON (no markdown fences):
 {{"title": "string", "topic_key": "string", "angle": "one sentence", "tags": ["tag1", "tag2"]}}
 """
 
-WRITE_PROMPT = """You are writing a draft blog post for {owner_name}'s technical blog ({portfolio_url}).
+WRITE_META_PROMPT = """You plan a technical blog post for {owner_name}'s site ({portfolio_url}).
 
 Topic: {title}
 Angle: {angle}
 Suggested tags: {tags}
 
-Rules:
-- Write in Markdown: start with an H2 (##), use ## and ### for sections, include a short intro and conclusion.
-- No uncited factual claims about companies, dates, or numbers; prefer patterns and experience-based advice.
-- If you mention tools or APIs, keep descriptions accurate at a high level; do not invent version numbers.
-- Length: roughly 600–1200 words of prose (code blocks optional but short) so the reply fits one JSON payload.
-- Voice: clear, practical, slightly warm — not corporate.
+Return ONLY a small JSON object (no markdown fences, no body text here):
+- slug: kebab-case URL segment
+- title: final headline (plain text, no line breaks)
+- description: one line for SEO/cards, max 200 characters, no line breaks or double quotes inside
+- tags: array of lowercase strings (max 12)
 
-Respond with ONLY valid JSON (no markdown fences):
-{{
-  "slug": "kebab-case-url-segment",
-  "title": "final title",
-  "description": "one line for SEO/listing, max 200 chars",
-  "body_md": "full markdown article only (no YAML frontmatter)",
-  "tags": ["lowercase", "tags"]
-}}
+Example shape:
+{{"slug": "my-topic-slug", "title": "My Title", "description": "One line only.", "tags": ["tag1"]}}
+"""
+
+WRITE_BODY_PROMPT = """You write the ARTICLE ONLY for {owner_name}'s technical blog ({portfolio_url}).
+
+Planned title: {title}
+Angle: {angle}
+Tags (use naturally if they fit): {tags}
+
+Output rules:
+- Output ONLY Markdown for the article body. No JSON. No YAML frontmatter.
+- First line must start with ## (your first heading).
+- Use ## and ### for sections; include intro and conclusion.
+- Roughly 600–1200 words; short code blocks allowed.
+- No uncited factual claims about companies, dates, or statistics; prefer patterns and experience.
+- Voice: clear, practical, slightly warm — not corporate.
+- Do not wrap the whole article in ``` markdown fences.
+- No preamble like "Here is the article:" — start directly with ##.
 """
 
 
@@ -116,6 +126,24 @@ def _strip_markdown_code_fence(text: str) -> str:
         lines = lines[:-1]
     elif lines and lines[-1].strip().endswith("```"):
         lines[-1] = lines[-1].rsplit("```", 1)[0].rstrip()
+    return "\n".join(lines).strip()
+
+
+def _strip_outer_markdown_fence(text: str) -> str:
+    """If the model wrapped the whole article in ``` / ```markdown, remove one outer fence."""
+    t = text.strip()
+    if not t.startswith("```"):
+        return t
+    lines = t.split("\n")
+    if not lines:
+        return t
+    first = lines[0].strip()
+    if first.startswith("```"):
+        lines = lines[1:]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
     return "\n".join(lines).strip()
 
 
@@ -264,34 +292,48 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
         tags_idea = []
     tags_idea = [str(t).strip().lower() for t in tags_idea if str(t).strip()][:12]
 
-    write_text = model.generate_content(
-        WRITE_PROMPT.format(
+    tags_hint = ", ".join(tags_idea) if tags_idea else "general"
+    meta_text = model.generate_content(
+        WRITE_META_PROMPT.format(
             owner_name=cfg.owner_name,
             portfolio_url=cfg.portfolio_url,
             title=title,
             angle=angle or title,
-            tags=", ".join(tags_idea) if tags_idea else "general",
+            tags=tags_hint,
         ),
         generation_config=gen_cfg,
     ).text
-    draft = _extract_json_object(write_text or "")
+    meta = _extract_json_object(meta_text or "")
 
-    raw_slug = _slugify_kebab(str(draft.get("slug") or title))
-    slug = _unique_slug(client, raw_slug)
-
-    body_md = str(draft.get("body_md", "")).strip()
-    if not body_md:
-        raise ValueError("Empty body_md from write model")
-
-    final_title = str(draft.get("title", title)).strip() or title
-    description = str(draft.get("description", "")).strip()[:500]
+    final_title = str(meta.get("title", title)).strip() or title
+    description = str(meta.get("description", "")).strip()
+    description = (
+        description.replace("\n", " ").replace("\r", " ").replace('"', "'")[:500]
+    )
     if not description:
-        description = (body_md[:197] + "…") if len(body_md) > 200 else body_md
+        description = (final_title[:197] + "…") if len(final_title) > 200 else final_title
 
-    tags = draft.get("tags") or tags_idea
+    tags = meta.get("tags") or tags_idea
     if not isinstance(tags, list):
         tags = tags_idea
     tags = [str(t).strip().lower() for t in tags if str(t).strip()][:16]
+
+    body_text = model.generate_content(
+        WRITE_BODY_PROMPT.format(
+            owner_name=cfg.owner_name,
+            portfolio_url=cfg.portfolio_url,
+            title=final_title,
+            angle=angle or title,
+            tags=tags_hint,
+        ),
+        generation_config=gen_cfg,
+    ).text
+    body_md = _strip_outer_markdown_fence(body_text or "").strip()
+    if not body_md:
+        raise ValueError("Empty body from write-body model")
+
+    raw_slug = _slugify_kebab(str(meta.get("slug") or final_title))
+    slug = _unique_slug(client, raw_slug)
 
     row: dict[str, Any] = {
         "slug": slug,
