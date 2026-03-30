@@ -42,7 +42,7 @@ Rules:
 - Write in Markdown: start with an H2 (##), use ## and ### for sections, include a short intro and conclusion.
 - No uncited factual claims about companies, dates, or numbers; prefer patterns and experience-based advice.
 - If you mention tools or APIs, keep descriptions accurate at a high level; do not invent version numbers.
-- Length: roughly 800–1500 words of prose (code blocks optional but short).
+- Length: roughly 600–1200 words of prose (code blocks optional but short) so the reply fits one JSON payload.
 - Voice: clear, practical, slightly warm — not corporate.
 
 Respond with ONLY valid JSON (no markdown fences):
@@ -100,12 +100,87 @@ class BlogPipelineConfig:
         )
 
 
+def _strip_markdown_code_fence(text: str) -> str:
+    """Remove leading ```json / ``` wrapper models often add despite instructions."""
+    t = text.strip()
+    if not t.startswith("```"):
+        return t
+    lines = t.split("\n")
+    if not lines:
+        return t
+    if lines[0].strip().startswith("```"):
+        lines = lines[1:]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    elif lines and lines[-1].strip().endswith("```"):
+        lines[-1] = lines[-1].rsplit("```", 1)[0].rstrip()
+    return "\n".join(lines).strip()
+
+
+def _extract_balanced_json_object(text: str) -> str:
+    """Find first top-level `{` … `}` with string/escape awareness (handles body_md with braces)."""
+    start = text.find("{")
+    if start < 0:
+        raise ValueError("No opening brace in model output")
+    depth = 0
+    in_string = False
+    escape = False
+    quote: str | None = None
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if in_string:
+            if ch == "\\":
+                escape = True
+            elif quote and ch == quote:
+                in_string = False
+                quote = None
+            continue
+        if ch == '"':
+            in_string = True
+            quote = '"'
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    raise ValueError(
+        "JSON object appears truncated (no closing `}`). "
+        "Try raising BLOG_MAX_OUTPUT_TOKENS or shortening the article in the prompt."
+    )
+
+
 def _extract_json_object(text: str) -> dict[str, Any]:
-    text = text.strip()
-    m = re.search(r"\{[\s\S]*\}\s*$", text)
-    if not m:
-        raise ValueError(f"No JSON object found in model output: {text[:400]!r}")
-    return json.loads(m.group(0))
+    raw = text.strip() if text else ""
+    if not raw:
+        raise ValueError("Empty model output")
+    cleaned = _strip_markdown_code_fence(raw)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+    try:
+        chunk = _extract_balanced_json_object(cleaned)
+        return json.loads(chunk)
+    except (json.JSONDecodeError, ValueError) as e:
+        preview = raw[:500].replace("\n", "\\n")
+        raise ValueError(f"Could not parse JSON from model: {e}; preview={preview!r}") from e
+
+
+def _blog_generation_config() -> Any:
+    """Larger default output so write step is not cut off mid-JSON."""
+    max_tokens = int(os.environ.get("BLOG_MAX_OUTPUT_TOKENS", "8192"))
+    max_tokens = max(2048, min(max_tokens, 65536))
+    try:
+        return genai.GenerationConfig(max_output_tokens=max_tokens)
+    except AttributeError:
+        return genai.types.GenerationConfig(max_output_tokens=max_tokens)
 
 
 def _slugify_kebab(s: str) -> str:
@@ -164,11 +239,13 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
     model = genai.GenerativeModel(cfg.gemini_model)
     client = _get_sb_client(cfg)
 
+    gen_cfg = _blog_generation_config()
     idea_text = model.generate_content(
         IDEA_PROMPT.format(
             owner_name=cfg.owner_name,
             portfolio_url=cfg.portfolio_url,
-        )
+        ),
+        generation_config=gen_cfg,
     ).text
     idea = _extract_json_object(idea_text or "")
     topic_key = str(idea["topic_key"]).strip().lower().replace(" ", "_")
@@ -194,7 +271,8 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
             title=title,
             angle=angle or title,
             tags=", ".join(tags_idea) if tags_idea else "general",
-        )
+        ),
+        generation_config=gen_cfg,
     ).text
     draft = _extract_json_object(write_text or "")
 
