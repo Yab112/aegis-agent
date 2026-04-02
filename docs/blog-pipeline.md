@@ -40,7 +40,7 @@ Existing `draft` → `review` → `published`. **`scheduled_publish_at`** (optio
 | Workflow | File | When | What |
 |----------|------|------|------|
 | **Blog ideas ingest** | [`.github/workflows/blog-ideas.yml`](../.github/workflows/blog-ideas.yml) | Sun/Wed 10:00 UTC + manual | HN + GitHub search → Gemini scores vs `BLOG_FOCUS_TAGS` → inserts `blog_ideas` |
-| **Blog draft** | [`.github/workflows/blog-draft.yml`](../.github/workflows/blog-draft.yml) | Mon/Fri 09:00 UTC + manual | Picks oldest **pending** idea (skill tier), writes draft; if queue empty and `BLOG_FALLBACK_GEMINI_IDEA` is true (default), uses Gemini-only idea |
+| **Blog draft** | [`.github/workflows/blog-draft.yml`](../.github/workflows/blog-draft.yml) | Every other day 09:00 UTC (`0 9 */2 * *`) + manual | Picks oldest **pending** idea (skill tier), writes draft; if queue empty and `BLOG_FALLBACK_GEMINI_IDEA` is true (default), uses Gemini-only idea |
 | **Blog publish** | [`.github/workflows/blog-publish.yml`](../.github/workflows/blog-publish.yml) | Daily 12:00 UTC + manual | `review` → `published` only (see below) |
 
 ---

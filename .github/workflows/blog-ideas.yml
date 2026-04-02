@@ -4,7 +4,7 @@ name: Blog ideas ingest
 
 on:
   schedule:
-    # Sunday & Wednesday 10:00 UTC — offset from Mon/Fri draft if you use both
+    # Sunday & Wednesday 10:00 UTC — keeps `blog_ideas` filled between every-other-day draft runs
     - cron: "0 10 * * 0,3"
   workflow_dispatch:
 
