@@ -211,6 +211,12 @@ def _blog_generation_config() -> Any:
         return genai.types.GenerationConfig(max_output_tokens=max_tokens)
 
 
+def normalize_topic_key(raw: str) -> str:
+    topic_key = str(raw).strip().lower().replace(" ", "_")
+    topic_key = re.sub(r"[^a-z0-9_]+", "", topic_key)
+    return topic_key or "topic"
+
+
 def _slugify_kebab(s: str) -> str:
     s = s.lower().strip()
     s = re.sub(r"[^a-z0-9]+", "-", s)
@@ -254,6 +260,22 @@ def _unique_slug(client: Client, base_slug: str) -> str:
     raise RuntimeError("Could not allocate unique slug")
 
 
+def _pick_pending_blog_idea(client: Client) -> dict[str, Any] | None:
+    """Oldest pending first within same skill tier (high before medium before low)."""
+    r = client.table("blog_ideas").select("*").eq("status", "pending").execute()
+    rows = r.data or []
+    if not rows:
+        return None
+    rank = {"high": 0, "medium": 1, "low": 2}
+    rows.sort(
+        key=lambda x: (
+            rank.get(str(x.get("skill_fit") or "medium").lower(), 2),
+            x.get("created_at") or "",
+        )
+    )
+    return rows[0]
+
+
 def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
     """
     One full pass: idea → dedup → write → insert draft.
@@ -268,29 +290,59 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
     client = _get_sb_client(cfg)
 
     gen_cfg = _blog_generation_config()
-    idea_text = model.generate_content(
-        IDEA_PROMPT.format(
-            owner_name=cfg.owner_name,
-            portfolio_url=cfg.portfolio_url,
-        ),
-        generation_config=gen_cfg,
-    ).text
-    idea = _extract_json_object(idea_text or "")
-    topic_key = str(idea["topic_key"]).strip().lower().replace(" ", "_")
-    topic_key = re.sub(r"[^a-z0-9_]+", "", topic_key)
-    if not topic_key:
-        raise ValueError("Empty topic_key from idea model")
+    idea_id: str | None = None
+    idea_row = _pick_pending_blog_idea(client)
+
+    if idea_row:
+        idea_id = str(idea_row["id"])
+        topic_key = normalize_topic_key(idea_row.get("topic_key") or "")
+        if not topic_key or topic_key == "topic":
+            client.table("blog_ideas").update(
+                {"status": "failed", "skip_reason": "invalid topic_key"}
+            ).eq("id", idea_id).execute()
+            raise ValueError("Empty topic_key on blog_ideas row")
+        title = str(idea_row.get("title") or "").strip() or "Blog post"
+        angle = str(idea_row.get("angle") or title).strip()
+        tags_idea = idea_row.get("normalized_tags") or []
+        if not isinstance(tags_idea, list):
+            tags_idea = []
+        tags_idea = [str(t).strip().lower() for t in tags_idea if str(t).strip()][:12]
+        logger.info("blog draft using queued idea id=%s topic_key=%s", idea_id, topic_key)
+    else:
+        fallback = os.environ.get("BLOG_FALLBACK_GEMINI_IDEA", "true").strip().lower()
+        if fallback in ("0", "false", "no", "off"):
+            logger.info("blog draft skipped: no pending blog_ideas and fallback disabled")
+            return {"status": "no_pending_ideas"}
+
+        idea_text = model.generate_content(
+            IDEA_PROMPT.format(
+                owner_name=cfg.owner_name,
+                portfolio_url=cfg.portfolio_url,
+            ),
+            generation_config=gen_cfg,
+        ).text
+        idea = _extract_json_object(idea_text or "")
+        topic_key = normalize_topic_key(idea["topic_key"])
+        if not topic_key or topic_key == "topic":
+            raise ValueError("Empty topic_key from idea model")
+
+        title = str(idea["title"]).strip()
+        angle = str(idea.get("angle", "")).strip()
+        tags_idea = idea.get("tags") or []
+        if not isinstance(tags_idea, list):
+            tags_idea = []
+        tags_idea = [str(t).strip().lower() for t in tags_idea if str(t).strip()][:12]
 
     if _topic_exists(client, topic_key):
         logger.info("blog draft skipped: topic_key already exists (%s)", topic_key)
+        if idea_id:
+            client.table("blog_ideas").update(
+                {
+                    "status": "skipped",
+                    "skip_reason": "topic_key already in blog_posts",
+                }
+            ).eq("id", idea_id).execute()
         return {"status": "skipped_duplicate", "reason": "topic_key", "topic_key": topic_key}
-
-    title = str(idea["title"]).strip()
-    angle = str(idea.get("angle", "")).strip()
-    tags_idea = idea.get("tags") or []
-    if not isinstance(tags_idea, list):
-        tags_idea = []
-    tags_idea = [str(t).strip().lower() for t in tags_idea if str(t).strip()][:12]
 
     tags_hint = ", ".join(tags_idea) if tags_idea else "general"
     meta_text = model.generate_content(
@@ -353,10 +405,18 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
         raise RuntimeError("Supabase insert returned no data")
 
     new_id = ins.data[0].get("id")
+    if idea_id and new_id:
+        client.table("blog_ideas").update(
+            {
+                "status": "consumed",
+                "consumed_by_post_id": str(new_id),
+            }
+        ).eq("id", idea_id).execute()
     logger.info("blog draft inserted id=%s slug=%s topic_key=%s", new_id, slug, topic_key)
     return {
         "status": "inserted",
         "id": str(new_id) if new_id else None,
         "slug": slug,
         "topic_key": topic_key,
+        "blog_idea_id": idea_id,
     }

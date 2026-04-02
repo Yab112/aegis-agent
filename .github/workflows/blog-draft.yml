@@ -1,10 +1,10 @@
-# Schedule: using every-20-min cron for verification. When stable, replace the cron line
-# below with:  cron: "0 9 * * 1,5"   (Monday & Friday 09:00 UTC)
+# Drafts from blog_ideas queue (pending) when available; else Gemini idea if BLOG_FALLBACK_GEMINI_IDEA is true.
+# Monday & Friday 09:00 UTC — use workflow_dispatch for immediate runs.
 name: Blog draft (scheduled)
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "0 9 * * 1,5"
   workflow_dispatch:
 
 jobs:
