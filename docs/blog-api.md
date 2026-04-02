@@ -9,6 +9,8 @@ Read-only HTTP API for **published** blog posts stored in Supabase. Drafts and `
 
 **OpenAPI:** `GET /docs` and `GET /openapi.json` on that host include these routes under the **blog** tag.
 
+**Pipeline (ideas, drafts, publish cron):** [blog-pipeline.md](blog-pipeline.md)
+
 **CORS:** Same as the rest of the API — your frontend origin (e.g. `https://yabibal.site`) must appear in server **`ALLOWED_ORIGINS`**. See [frontend-api.md](frontend-api.md#cors).
 
 **Auth:** None. These routes are public.

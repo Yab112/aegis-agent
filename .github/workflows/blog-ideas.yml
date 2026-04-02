@@ -1,0 +1,43 @@
+# Fetches HN + GitHub signals, scores with Gemini vs BLOG_FOCUS_TAGS, inserts blog_ideas (pending).
+# Run supabase_blog_ideas.sql before first use.
+name: Blog ideas ingest
+
+on:
+  schedule:
+    # Sunday & Wednesday 10:00 UTC — offset from Mon/Fri draft if you use both
+    - cron: "0 10 * * 0,3"
+  workflow_dispatch:
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - run: pip install -r requirements.txt
+
+      - name: Ingest ideas
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          OWNER_NAME: ${{ secrets.OWNER_NAME }}
+          PORTFOLIO_URL: ${{ secrets.PORTFOLIO_URL }}
+          BLOG_FOCUS_TAGS: ${{ secrets.BLOG_FOCUS_TAGS }}
+          BLOG_GITHUB_SEARCH_QUERY: ${{ secrets.BLOG_GITHUB_SEARCH_QUERY }}
+          BLOG_GITHUB_TOKEN: ${{ secrets.BLOG_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BLOG_HN_LIMIT: "12"
+          BLOG_GITHUB_LIMIT: "6"
+        run: python scripts/blog_ideas_ingest.py
