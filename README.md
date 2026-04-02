@@ -88,7 +88,7 @@ aegis-agent/
 │   │   ├── handoff_tool.py   # WhatsApp Cloud API handoff
 │   │   └── lead_tool.py      # Supabase lead logger + session store
 │   ├── blog/
-│   │   └── pipeline.py       # Twice-weekly blog draft pipeline (topic → write → insert)
+│   │   └── pipeline.py       # Scheduled blog draft pipeline (topic → write → insert)
 │   └── api/
 │       ├── main.py           # FastAPI app — lifespan, CORS, route mounts
 │       ├── routes.py         # POST /chat, GET /health

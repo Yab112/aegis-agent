@@ -27,6 +27,8 @@ from src.blog.pipeline import (
 HN_TOP = "https://hacker-news.firebaseio.com/v0/topstories.json"
 HN_ITEM = "https://hacker-news.firebaseio.com/v0/item/{id}.json"
 GITHUB_SEARCH = "https://api.github.com/search/repositories"
+# GitHub Search requires non-empty `q`; empty env secrets still set the var to "".
+DEFAULT_GITHUB_SEARCH_QUERY = "python ai stars:>500 pushed:>2024-01-01"
 
 SCORE_PROMPT = """You vet a blog idea for {owner_name}'s technical blog ({portfolio_url}).
 
@@ -98,13 +100,17 @@ def _github_fetch_repos(
     limit: int = 6,
     token: str | None = None,
 ) -> list[dict[str, Any]]:
+    q = (query or "").strip()
+    if not q:
+        logger.warning("GitHub search query empty; skip GitHub batch")
+        return []
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "aegis-agent-blog-ideas",
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    params = {"q": query, "sort": "updated", "per_page": str(limit)}
+    params = {"q": q, "sort": "updated", "per_page": str(limit)}
     r = client.get(GITHUB_SEARCH, params=params, headers=headers, timeout=30.0)
     if r.status_code == 403:
         logger.warning("GitHub search rate limited or forbidden; skip GitHub batch")
@@ -228,9 +234,8 @@ def run_idea_ingest(
     skipped = 0
     errors = 0
 
-    gh_q = github_query or os.environ.get(
-        "BLOG_GITHUB_SEARCH_QUERY", "python ai stars:>500 pushed:>2024-01-01"
-    )
+    raw_gh_q = (github_query or os.environ.get("BLOG_GITHUB_SEARCH_QUERY") or "").strip()
+    gh_q = raw_gh_q if raw_gh_q else DEFAULT_GITHUB_SEARCH_QUERY
     tok = (github_token or "").strip() or os.environ.get("GITHUB_TOKEN", "").strip()
     tok = tok or os.environ.get("BLOG_GITHUB_TOKEN", "").strip() or None
 
