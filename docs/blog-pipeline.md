@@ -40,7 +40,7 @@ Existing `draft` → `review` → `published`. **`scheduled_publish_at`** (optio
 | Workflow | File | When | What |
 |----------|------|------|------|
 | **Blog ideas ingest** | [`.github/workflows/blog-ideas.yml`](../.github/workflows/blog-ideas.yml) | Sun/Wed 10:00 UTC + manual | HN + GitHub search → Gemini scores vs `BLOG_FOCUS_TAGS` → inserts `blog_ideas` |
-| **Blog draft** | [`.github/workflows/blog-draft.yml`](../.github/workflows/blog-draft.yml) | Every other day 09:00 UTC (`0 9 */2 * *`) + manual | Picks oldest **pending** idea (skill tier), writes draft; if queue empty and `BLOG_FALLBACK_GEMINI_IDEA` is true (default), uses Gemini-only idea |
+| **Blog draft** | [`.github/workflows/blog-draft.yml`](../.github/workflows/blog-draft.yml) | Every other day 09:00 UTC (`0 9 */2 * *`) + manual | Picks oldest **pending** idea (skill tier), writes post; if queue empty and `BLOG_FALLBACK_GEMINI_IDEA` is true (default), uses Gemini-only idea. **`BLOG_POST_STATUS_AFTER_WRITE`** (see below) controls `draft` / `review` / **`published`** (live immediately). |
 | **Blog publish** | [`.github/workflows/blog-publish.yml`](../.github/workflows/blog-publish.yml) | Daily 12:00 UTC + manual | `review` → `published` only (see below) |
 
 ---
@@ -52,21 +52,35 @@ Existing `draft` → `review` → `published`. **`scheduled_publish_at`** (optio
 - Required: `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
 - Optional: `GEMINI_MODEL`, `OWNER_NAME`, `PORTFOLIO_URL`, `BLOG_FOCUS_TAGS` (comma-separated focus areas), `BLOG_GITHUB_SEARCH_QUERY`, `BLOG_GITHUB_TOKEN`, `GITHUB_TOKEN` (Actions default helps GitHub API rate limits), `BLOG_HN_LIMIT`, `BLOG_GITHUB_LIMIT`
 
-**Draft** (`blog_draft.py`): same as before; optional `BLOG_FALLBACK_GEMINI_IDEA` (`true`/`false`) — if `false` and no pending ideas, job returns `no_pending_ideas` without calling Gemini.
+**Draft** (`blog_draft.py`): optional `BLOG_FALLBACK_GEMINI_IDEA` (`true`/`false`) — if `false` and no pending ideas, job returns `no_pending_ideas` without calling Gemini.
+
+**Post status (no manual review):** `BLOG_POST_STATUS_AFTER_WRITE`:
+
+| Value | Behavior |
+|--------|----------|
+| `draft` (default) | Row stays internal until you change status in Supabase. |
+| `review` | Queued for **Blog publish** cron (`review` → `published`) with zero editing. |
+| `published` | Sets `published_at` immediately; post is public on the next API read. |
+
+The scheduled workflow sets `BLOG_POST_STATUS_AFTER_WRITE=published` so runs are fully hands-off. Override locally with `draft` or `review` if you want a gate.
 
 **Publish** (`blog_publish_reviewed.py`): `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` only (no Gemini).
 
 ---
 
-## 5. Human workflow (recommended)
+## 5. Human workflow (optional)
+
+**Fully automated (default in `blog-draft.yml`):** set `BLOG_POST_STATUS_AFTER_WRITE=published` so new posts go live without opening Supabase.
+
+**If you use `draft` or `review` instead:**
 
 1. **Ingest** fills `blog_ideas` with `pending` rows.
-2. **Draft** job creates `blog_posts` with `status=draft` and marks the idea `consumed`.
-3. You **edit** the post in Supabase (or a future admin UI).
-4. Set **`status=review`** when you are happy (optional: set **`scheduled_publish_at`** for a future go-live).
-5. **Publish** job promotes **`review` → `published`** and sets **`published_at`**.
+2. **Draft** job creates `blog_posts` and marks the idea `consumed`.
+3. Optionally **edit** in Supabase; set **`status=review`** (if you started from `draft`).
+4. Optional: **`scheduled_publish_at`** for a future go-live when using the publish job.
+5. **Publish** job promotes **`review` → `published`** and sets **`published_at`** when due.
 
-**Never** auto-publish `draft` rows.
+The publish job **never** promotes raw `draft` rows (only `review` → `published`). Use `BLOG_POST_STATUS_AFTER_WRITE=review` to automate that handoff without editing content.
 
 ---
 
