@@ -5,7 +5,8 @@ Requires env:
   GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY
 
 Optional:
-  GEMINI_MODEL, OWNER_NAME, PORTFOLIO_URL, BLOG_DEFAULT_OG_IMAGE
+  GEMINI_MODEL, OWNER_NAME, PORTFOLIO_URL, BLOG_DEFAULT_OG_IMAGE,
+  BLOG_POST_STATUS_AFTER_WRITE (draft | review | published, default draft)
 
 Usage:
   python scripts/blog_draft.py

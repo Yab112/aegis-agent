@@ -1,5 +1,5 @@
 """
-Twice-weekly blog draft pipeline: propose topic → dedup → write Markdown → insert draft.
+Blog pipeline: propose topic → dedup → write Markdown → insert row (status from env).
 """
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import os
 import re
 import warnings
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from supabase import Client, create_client
@@ -260,6 +261,27 @@ def _unique_slug(client: Client, base_slug: str) -> str:
     raise RuntimeError("Could not allocate unique slug")
 
 
+def _post_status_after_write() -> tuple[str, str | None]:
+    """
+    BLOG_POST_STATUS_AFTER_WRITE: draft | review | published (default draft).
+
+    - draft: insert as before; you must promote manually or via publish flow.
+    - review: ready for blog-publish.yml (review → published) with no human edit.
+    - published: live immediately (sets published_at); public API shows the post.
+    """
+    raw = os.environ.get("BLOG_POST_STATUS_AFTER_WRITE", "draft").strip().lower()
+    if raw in ("published", "publish", "live"):
+        return "published", datetime.now(timezone.utc).isoformat()
+    if raw == "review":
+        return "review", None
+    if raw == "draft":
+        return "draft", None
+    logger.warning(
+        "Invalid BLOG_POST_STATUS_AFTER_WRITE=%r; using draft", raw
+    )
+    return "draft", None
+
+
 def _pick_pending_blog_idea(client: Client) -> dict[str, Any] | None:
     """Oldest pending first within same skill tier (high before medium before low)."""
     r = client.table("blog_ideas").select("*").eq("status", "pending").execute()
@@ -278,12 +300,15 @@ def _pick_pending_blog_idea(client: Client) -> dict[str, Any] | None:
 
 def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
     """
-    One full pass: idea → dedup → write → insert draft.
+    One full pass: idea → dedup → write → insert blog_posts row.
+
+    Insert status and published_at follow BLOG_POST_STATUS_AFTER_WRITE (see _post_status_after_write).
 
     Returns a dict:
-      - status: "inserted" | "skipped_duplicate"
+      - status: "inserted" | "skipped_duplicate" | "no_pending_ideas"
       - topic_key, slug (when applicable)
       - id (uuid string when inserted)
+      - post_status, published_at when inserted
     """
     genai.configure(api_key=cfg.gemini_api_key)
     model = genai.GenerativeModel(cfg.gemini_model)
@@ -387,15 +412,16 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
     raw_slug = _slugify_kebab(str(meta.get("slug") or final_title))
     slug = _unique_slug(client, raw_slug)
 
+    post_status, published_at = _post_status_after_write()
     row: dict[str, Any] = {
         "slug": slug,
         "title": final_title,
         "description": description,
         "body_md": body_md,
-        "status": "draft",
+        "status": post_status,
         "tags": tags,
         "topic_key": topic_key,
-        "published_at": None,
+        "published_at": published_at,
         "image_url": cfg.default_og_image_url,
         "og_image_url": cfg.default_og_image_url,
     }
@@ -412,11 +438,19 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
                 "consumed_by_post_id": str(new_id),
             }
         ).eq("id", idea_id).execute()
-    logger.info("blog draft inserted id=%s slug=%s topic_key=%s", new_id, slug, topic_key)
+    logger.info(
+        "blog post inserted id=%s slug=%s topic_key=%s post_status=%s",
+        new_id,
+        slug,
+        topic_key,
+        post_status,
+    )
     return {
         "status": "inserted",
         "id": str(new_id) if new_id else None,
         "slug": slug,
         "topic_key": topic_key,
         "blog_idea_id": idea_id,
+        "post_status": post_status,
+        "published_at": published_at,
     }
