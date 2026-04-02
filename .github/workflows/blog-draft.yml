@@ -1,10 +1,9 @@
-# Drafts from blog_ideas queue (pending) when available; else Gemini idea if BLOG_FALLBACK_GEMINI_IDEA is true.
-# Monday & Friday 09:00 UTC — use workflow_dispatch for immediate runs.
+# Schedule: runs every other day at 09:00 UTC
 name: Blog draft (scheduled)
 
 on:
   schedule:
-    - cron: "0 9 * * 1,5"
+    - cron: "0 9 */2 * *"
   workflow_dispatch:
 
 jobs:
