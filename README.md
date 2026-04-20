@@ -163,7 +163,7 @@ Runs every other day at 09:00 UTC (or on demand). Uses Gemini to propose a topic
 cron: "0 9 */2 * *" ──► checkout → install → python scripts/blog_draft.py
 ```
 
-Required secrets: all of the above plus `GEMINI_MODEL`, `OWNER_NAME`, `PORTFOLIO_URL`, `BLOG_DEFAULT_OG_IMAGE`
+Required secrets: all of the above plus `GEMINI_MODEL`, `OWNER_NAME`, `PORTFOLIO_URL`, `BLOG_DEFAULT_OG_IMAGE`, `BLOG_IMAGE_MODEL`, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `CLOUDINARY_FOLDER`
 
 > Want more automation? Reach out at [yabibal.site](https://yabibal.site) and I'll add it.
 

@@ -3,15 +3,19 @@ Blog pipeline: propose topic → dedup → write Markdown → insert row (status
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import logging
 import os
 import re
+import time
 import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+import requests
 from supabase import Client, create_client
 
 logger = logging.getLogger("aegis.blog")
@@ -66,6 +70,20 @@ Output rules:
 - No preamble like "Here is the article:" — start directly with ##.
 """
 
+IMAGE_PROMPT_PROMPT = """You write visual direction for a technical blog cover image.
+
+Blog title: {title}
+Description: {description}
+Angle: {angle}
+Tags: {tags}
+
+Return ONLY valid JSON (no markdown fences):
+{{
+    "image_prompt": "A concise, vivid prompt for an AI image model (no text in image, no logos, no watermarks).",
+    "image_alt": "A short alt text sentence describing the generated cover image."
+}}
+"""
+
 
 @dataclass
 class BlogPipelineConfig:
@@ -76,6 +94,12 @@ class BlogPipelineConfig:
     owner_name: str = "Yabibal"
     portfolio_url: str = "https://yabibal.site"
     default_og_image_url: str | None = None
+    blog_image_model: str = "gemini-2.0-flash-preview-image-generation"
+    cloudinary_cloud_name: str | None = None
+    cloudinary_api_key: str | None = None
+    cloudinary_api_secret: str | None = None
+    cloudinary_folder: str = "aegis/blog"
+    blog_generate_images: bool = True
 
     @classmethod
     def from_full_settings(cls, settings: Any) -> BlogPipelineConfig:
@@ -87,6 +111,12 @@ class BlogPipelineConfig:
             owner_name=settings.owner_name,
             portfolio_url=settings.portfolio_url,
             default_og_image_url=os.getenv("BLOG_DEFAULT_OG_IMAGE") or None,
+            blog_image_model=os.getenv("BLOG_IMAGE_MODEL", "gemini-2.0-flash-preview-image-generation").strip(),
+            cloudinary_cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME") or None,
+            cloudinary_api_key=os.getenv("CLOUDINARY_API_KEY") or None,
+            cloudinary_api_secret=os.getenv("CLOUDINARY_API_SECRET") or None,
+            cloudinary_folder=os.getenv("CLOUDINARY_FOLDER", "aegis/blog").strip() or "aegis/blog",
+            blog_generate_images=os.getenv("BLOG_GENERATE_IMAGES", "true").strip().lower() not in ("0", "false", "no", "off"),
         )
 
     @classmethod
@@ -108,6 +138,12 @@ class BlogPipelineConfig:
             owner_name=os.environ.get("OWNER_NAME", "Yabibal").strip(),
             portfolio_url=os.environ.get("PORTFOLIO_URL", "https://yabibal.site").strip(),
             default_og_image_url=os.getenv("BLOG_DEFAULT_OG_IMAGE") or None,
+            blog_image_model=os.getenv("BLOG_IMAGE_MODEL", "gemini-2.0-flash-preview-image-generation").strip(),
+            cloudinary_cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME") or None,
+            cloudinary_api_key=os.getenv("CLOUDINARY_API_KEY") or None,
+            cloudinary_api_secret=os.getenv("CLOUDINARY_API_SECRET") or None,
+            cloudinary_folder=os.getenv("CLOUDINARY_FOLDER", "aegis/blog").strip() or "aegis/blog",
+            blog_generate_images=os.getenv("BLOG_GENERATE_IMAGES", "true").strip().lower() not in ("0", "false", "no", "off"),
         )
 
 
@@ -280,6 +316,141 @@ def _post_status_after_write() -> tuple[str, str | None]:
         "Invalid BLOG_POST_STATUS_AFTER_WRITE=%r; using draft", raw
     )
     return "draft", None
+
+
+def _extract_image_bytes_from_gemini_response(resp: Any) -> tuple[bytes, str] | None:
+    candidates = getattr(resp, "candidates", None) or []
+    for cand in candidates:
+        content = getattr(cand, "content", None)
+        parts = getattr(content, "parts", None) or []
+        for part in parts:
+            inline = getattr(part, "inline_data", None)
+            if not inline:
+                continue
+            mime_type = getattr(inline, "mime_type", None) or "image/png"
+            data = getattr(inline, "data", None)
+            if isinstance(data, bytes) and data:
+                return data, mime_type
+            if isinstance(data, str) and data.strip():
+                try:
+                    return base64.b64decode(data), mime_type
+                except Exception:
+                    continue
+
+    # Some SDK variants expose parts directly on response.
+    parts = getattr(resp, "parts", None) or []
+    for part in parts:
+        inline = getattr(part, "inline_data", None)
+        if not inline:
+            continue
+        mime_type = getattr(inline, "mime_type", None) or "image/png"
+        data = getattr(inline, "data", None)
+        if isinstance(data, bytes) and data:
+            return data, mime_type
+        if isinstance(data, str) and data.strip():
+            try:
+                return base64.b64decode(data), mime_type
+            except Exception:
+                continue
+    return None
+
+
+def _build_cover_prompt(
+    model: Any,
+    gen_cfg: Any,
+    *,
+    title: str,
+    description: str,
+    angle: str,
+    tags: list[str],
+) -> tuple[str, str]:
+    tags_hint = ", ".join(tags) if tags else "general"
+    raw = model.generate_content(
+        IMAGE_PROMPT_PROMPT.format(
+            title=title,
+            description=description,
+            angle=angle or title,
+            tags=tags_hint,
+        ),
+        generation_config=gen_cfg,
+    ).text
+    payload = _extract_json_object(raw or "")
+    image_prompt = str(payload.get("image_prompt") or "").strip()
+    image_alt = str(payload.get("image_alt") or "").strip()
+    if not image_prompt:
+        image_prompt = (
+            f"Editorial style technical illustration about {title}. "
+            "No text, no logos, no watermark. Clean lighting, modern composition."
+        )
+    if not image_alt:
+        image_alt = f"Cover image for {title}"
+    return image_prompt[:1200], image_alt[:280]
+
+
+def _generate_cover_image_bytes(cfg: BlogPipelineConfig, image_prompt: str) -> tuple[bytes, str] | None:
+    try:
+        image_model = genai.GenerativeModel(cfg.blog_image_model)
+        resp = image_model.generate_content(image_prompt)
+        return _extract_image_bytes_from_gemini_response(resp)
+    except Exception as e:
+        logger.warning("cover image generation failed for model=%s: %s", cfg.blog_image_model, e)
+        return None
+
+
+def _cloudinary_signature(params: dict[str, str], api_secret: str) -> str:
+    serialized = "&".join(f"{k}={params[k]}" for k in sorted(params))
+    return hashlib.sha1(f"{serialized}{api_secret}".encode("utf-8")).hexdigest()
+
+
+def _upload_cover_to_cloudinary(
+    cfg: BlogPipelineConfig,
+    *,
+    slug: str,
+    image_bytes: bytes,
+    mime_type: str,
+    image_prompt: str,
+) -> str | None:
+    cloud = (cfg.cloudinary_cloud_name or "").strip()
+    key = (cfg.cloudinary_api_key or "").strip()
+    secret = (cfg.cloudinary_api_secret or "").strip()
+    if not cloud or not key or not secret:
+        logger.info("cloudinary not configured, skip generated cover upload")
+        return None
+
+    ts = str(int(time.time()))
+    sign_params = {
+        "folder": cfg.cloudinary_folder,
+        "public_id": f"{slug}-cover",
+        "timestamp": ts,
+    }
+    signature = _cloudinary_signature(sign_params, secret)
+
+    url = f"https://api.cloudinary.com/v1_1/{cloud}/image/upload"
+    form = {
+        "api_key": key,
+        "timestamp": ts,
+        "signature": signature,
+        "folder": cfg.cloudinary_folder,
+        "public_id": f"{slug}-cover",
+        "overwrite": "true",
+        "context": f"caption={image_prompt[:180]}",
+        "tags": "aegis,blog,cover",
+    }
+    ext = "png"
+    if "/" in mime_type:
+        ext = mime_type.split("/", 1)[1].lower()
+        if ext == "jpeg":
+            ext = "jpg"
+    files = {"file": (f"{slug}-cover.{ext}", image_bytes, mime_type)}
+    try:
+        resp = requests.post(url, data=form, files=files, timeout=60)
+        resp.raise_for_status()
+        payload = resp.json() if resp.content else {}
+        secure_url = str(payload.get("secure_url") or "").strip()
+        return secure_url or None
+    except Exception as e:
+        logger.warning("cloudinary upload failed for slug=%s: %s", slug, e)
+        return None
 
 
 def _resource_links_from_tags(tags: list[str], source_url: str | None = None) -> list[dict[str, str]]:
@@ -459,7 +630,34 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
     raw_slug = _slugify_kebab(str(meta.get("slug") or final_title))
     slug = _unique_slug(client, raw_slug)
 
+    image_prompt: str | None = None
+    generated_image_url: str | None = None
+    image_alt: str | None = None
+    if cfg.blog_generate_images:
+        try:
+            image_prompt, image_alt = _build_cover_prompt(
+                model,
+                gen_cfg,
+                title=final_title,
+                description=description,
+                angle=angle,
+                tags=tags,
+            )
+            generated = _generate_cover_image_bytes(cfg, image_prompt)
+            if generated:
+                image_bytes, mime_type = generated
+                generated_image_url = _upload_cover_to_cloudinary(
+                    cfg,
+                    slug=slug,
+                    image_bytes=image_bytes,
+                    mime_type=mime_type,
+                    image_prompt=image_prompt,
+                )
+        except Exception as e:
+            logger.warning("cover generation pipeline skipped for slug=%s: %s", slug, e)
+
     post_status, published_at = _post_status_after_write()
+    final_image_url = generated_image_url or cfg.default_og_image_url
     row: dict[str, Any] = {
         "slug": slug,
         "title": final_title,
@@ -470,11 +668,22 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
         "topic_key": topic_key,
         "resource_links": resource_links,
         "published_at": published_at,
-        "image_url": cfg.default_og_image_url,
-        "og_image_url": cfg.default_og_image_url,
+        "image_url": final_image_url,
+        "og_image_url": final_image_url,
+        "image_alt": image_alt,
+        "image_prompt": image_prompt,
     }
 
-    ins = client.table("blog_posts").insert(row).execute()
+    try:
+        ins = client.table("blog_posts").insert(row).execute()
+    except Exception as exc:
+        message = str(exc)
+        if "resource_links" not in message and "image_prompt" not in message:
+            raise
+        fallback_row = dict(row)
+        fallback_row.pop("resource_links", None)
+        fallback_row.pop("image_prompt", None)
+        ins = client.table("blog_posts").insert(fallback_row).execute()
     if not ins.data:
         raise RuntimeError("Supabase insert returned no data")
 

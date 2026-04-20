@@ -25,6 +25,7 @@ create table if not exists public.blog_posts (
   og_image_url    text,
   canonical_url   text,
   resource_links  jsonb not null default '[]'::jsonb,
+  image_prompt    text,
 
   -- For dedup / pipeline: stable key from your "trend → idea" step (normalized topic)
   topic_key       text,
@@ -38,6 +39,9 @@ create table if not exists public.blog_posts (
 
 alter table public.blog_posts
   add column if not exists resource_links jsonb not null default '[]'::jsonb;
+
+alter table public.blog_posts
+  add column if not exists image_prompt text;
 
 create index if not exists blog_posts_published_at_desc
   on public.blog_posts (published_at desc nulls last)

@@ -6,7 +6,9 @@ Requires env:
 
 Optional:
   GEMINI_MODEL, OWNER_NAME, PORTFOLIO_URL, BLOG_DEFAULT_OG_IMAGE,
-  BLOG_POST_STATUS_AFTER_WRITE (draft | review | published, default draft)
+    BLOG_POST_STATUS_AFTER_WRITE (draft | review | published, default draft),
+    BLOG_GENERATE_IMAGES, BLOG_IMAGE_MODEL,
+    CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET, CLOUDINARY_FOLDER
 
 Usage:
   python scripts/blog_draft.py
