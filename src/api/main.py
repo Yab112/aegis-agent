@@ -80,7 +80,7 @@ def root():
         "docs": "/docs",
         "health": "/health",
         "chat_api": "POST /chat",
-        "blog_api": "GET /blog, GET /blog/{slug}",
+        "blog_api": "GET /blog, GET /blog/topics, GET /blog/{slug}",
         "blog_internal": "POST /internal/blog/generate-draft (auth required)",
     }
 

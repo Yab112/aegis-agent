@@ -1,9 +1,12 @@
 """
-Ingest blog ideas from Hacker News + GitHub search, score with Gemini, insert blog_ideas.
+Ingest blog ideas from multiple public sources (HN, GitHub, Dev.to, Reddit,
+Stack Overflow), score with Gemini, insert blog_ideas.
 
 Env (required): GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY
 Optional: GEMINI_MODEL, OWNER_NAME, PORTFOLIO_URL, BLOG_FOCUS_TAGS,
-           BLOG_GITHUB_SEARCH_QUERY, BLOG_GITHUB_TOKEN, BLOG_HN_LIMIT, BLOG_GITHUB_LIMIT
+           BLOG_GITHUB_SEARCH_QUERY, BLOG_GITHUB_TOKEN, BLOG_HN_LIMIT,
+           BLOG_GITHUB_LIMIT, BLOG_DEVTO_LIMIT, BLOG_REDDIT_LIMIT,
+           BLOG_STACKOVERFLOW_LIMIT, BLOG_MAX_CANDIDATES
 
 Usage:
   python scripts/blog_ideas_ingest.py
