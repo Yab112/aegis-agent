@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -33,13 +34,31 @@ def main() -> None:
         logger.error("%s", e)
         sys.exit(1)
 
-    try:
-        out = run_blog_draft_once(cfg)
-        print(json.dumps(out, indent=2))
-        sys.exit(0)
-    except Exception:
-        logger.exception("blog draft pipeline failed")
-        sys.exit(1)
+    max_attempts = 6
+    base_sleep = 15
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            out = run_blog_draft_once(cfg)
+            print(json.dumps(out, indent=2))
+            sys.exit(0)
+
+        except Exception as e:
+            # Handle Gemini quota/rate-limit specifically
+            msg = str(e)
+            is_quota = "ResourceExhausted" in msg or "429" in msg or "Quota exceeded" in msg
+
+            if is_quota and attempt < max_attempts:
+                sleep_s = base_sleep * attempt  # simple linear backoff
+                logger.warning(
+                    "Gemini quota exceeded (attempt %s/%s). Sleeping %ss then retrying...",
+                    attempt, max_attempts, sleep_s
+                )
+                time.sleep(sleep_s)
+                continue
+
+            logger.exception("blog draft pipeline failed")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
