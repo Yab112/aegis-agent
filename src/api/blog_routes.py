@@ -7,6 +7,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from postgrest.exceptions import APIError
 from supabase import create_client
 
 from config.settings import Settings, get_settings
@@ -242,17 +243,34 @@ def get_blog_post(
     settings: Annotated[Settings, Depends(get_settings)],
 ):
     client = _client(settings)
-    res = (
-        client.table("blog_posts")
-        .select(
-            "slug,title,description,body_md,published_at,updated_at,tags,"
-            "image_url,image_alt,og_image_url,canonical_url,topic_key,resource_links"
-        )
-        .eq("slug", slug)
-        .eq("status", "published")
-        .limit(1)
-        .execute()
+    select_cols = (
+        "slug,title,description,body_md,published_at,updated_at,tags,"
+        "image_url,image_alt,og_image_url,canonical_url,topic_key,resource_links"
     )
+    try:
+        res = (
+            client.table("blog_posts")
+            .select(select_cols)
+            .eq("slug", slug)
+            .eq("status", "published")
+            .limit(1)
+            .execute()
+        )
+    except APIError as exc:
+        message = str(getattr(exc, "message", exc))
+        if "resource_links" not in message:
+            raise
+        res = (
+            client.table("blog_posts")
+            .select(
+                "slug,title,description,body_md,published_at,updated_at,tags,"
+                "image_url,image_alt,og_image_url,canonical_url,topic_key"
+            )
+            .eq("slug", slug)
+            .eq("status", "published")
+            .limit(1)
+            .execute()
+        )
     rows = res.data or []
     if not rows:
         raise HTTPException(status_code=404, detail="Post not found")
