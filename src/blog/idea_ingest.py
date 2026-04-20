@@ -1,5 +1,6 @@
 """
-Fetch developer signals (Hacker News, GitHub), score with Gemini vs BLOG_FOCUS_TAGS, insert blog_ideas.
+Fetch developer signals from multiple sources, score with Gemini vs BLOG_FOCUS_TAGS,
+then insert blog_ideas with dedup and fallback behavior.
 """
 from __future__ import annotations
 
@@ -27,6 +28,9 @@ from src.blog.pipeline import (
 HN_TOP = "https://hacker-news.firebaseio.com/v0/topstories.json"
 HN_ITEM = "https://hacker-news.firebaseio.com/v0/item/{id}.json"
 GITHUB_SEARCH = "https://api.github.com/search/repositories"
+DEVTO_ARTICLES = "https://dev.to/api/articles"
+REDDIT_TOP = "https://www.reddit.com/r/programming/top.json"
+STACKOVERFLOW_QUESTIONS = "https://api.stackexchange.com/2.3/questions"
 # GitHub Search requires non-empty `q`; empty env secrets still set the var to "".
 DEFAULT_GITHUB_SEARCH_QUERY = "python ai stars:>500 pushed:>2024-01-01"
 
@@ -94,6 +98,115 @@ def _hn_fetch_stories(client: httpx.Client, limit: int = 12) -> list[dict[str, A
     return out
 
 
+def _devto_fetch_articles(client: httpx.Client, limit: int = 6) -> list[dict[str, Any]]:
+    params = {"per_page": str(limit), "top": "7"}
+    headers = {"User-Agent": "aegis-agent-blog-ideas"}
+    r = client.get(DEVTO_ARTICLES, params=params, headers=headers, timeout=25.0)
+    r.raise_for_status()
+    items = r.json() or []
+    out: list[dict[str, Any]] = []
+    for it in items[:limit]:
+        aid = str(it.get("id") or "")
+        title = str(it.get("title") or "").strip()
+        if not title:
+            continue
+        desc = str(it.get("description") or "").strip()
+        url = str(it.get("url") or "").strip()
+        tags_text = str(it.get("tag_list") or "").strip()
+        out.append(
+            {
+                "source": "devto",
+                "source_id": aid or title[:120],
+                "source_url": url,
+                "title": title[:500],
+                "raw_excerpt": (desc or tags_text or title)[:800],
+                "reference_jsonb": {
+                    "author": (it.get("user") or {}).get("username"),
+                    "tags": tags_text,
+                    "positive_reactions_count": it.get("positive_reactions_count"),
+                },
+            }
+        )
+    return out
+
+
+def _reddit_fetch_posts(client: httpx.Client, limit: int = 6) -> list[dict[str, Any]]:
+    params = {"t": "week", "limit": str(limit)}
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "aegis-agent-blog-ideas/1.0",
+    }
+    r = client.get(REDDIT_TOP, params=params, headers=headers, timeout=25.0)
+    if r.status_code in (403, 429):
+        logger.warning("Reddit temporarily blocked/rate limited; skip Reddit batch")
+        return []
+    r.raise_for_status()
+    payload = r.json() or {}
+    children = (((payload.get("data") or {}).get("children")) or [])
+    out: list[dict[str, Any]] = []
+    for child in children[:limit]:
+        data = child.get("data") or {}
+        pid = str(data.get("id") or "")
+        title = str(data.get("title") or "").strip()
+        if not title:
+            continue
+        permalink = str(data.get("permalink") or "").strip()
+        full_url = f"https://www.reddit.com{permalink}" if permalink else ""
+        selftext = str(data.get("selftext") or "").strip()
+        out.append(
+            {
+                "source": "reddit",
+                "source_id": pid or title[:120],
+                "source_url": full_url,
+                "title": title[:500],
+                "raw_excerpt": (selftext or title)[:800],
+                "reference_jsonb": {
+                    "subreddit": data.get("subreddit"),
+                    "score": data.get("score"),
+                    "num_comments": data.get("num_comments"),
+                },
+            }
+        )
+    return out
+
+
+def _stackoverflow_fetch_questions(client: httpx.Client, limit: int = 6) -> list[dict[str, Any]]:
+    params = {
+        "order": "desc",
+        "sort": "votes",
+        "site": "stackoverflow",
+        "tagged": "python;fastapi;machine-learning",
+        "pagesize": str(limit),
+    }
+    r = client.get(STACKOVERFLOW_QUESTIONS, params=params, timeout=25.0)
+    if r.status_code in (400, 403, 429):
+        logger.warning("StackOverflow API unavailable/rate limited; skip SO batch")
+        return []
+    r.raise_for_status()
+    items = (r.json() or {}).get("items") or []
+    out: list[dict[str, Any]] = []
+    for it in items[:limit]:
+        qid = str(it.get("question_id") or "")
+        title = str(it.get("title") or "").strip()
+        if not title:
+            continue
+        out.append(
+            {
+                "source": "stackoverflow",
+                "source_id": qid or title[:120],
+                "source_url": str(it.get("link") or "").strip(),
+                "title": title[:500],
+                "raw_excerpt": title[:800],
+                "reference_jsonb": {
+                    "score": it.get("score"),
+                    "answer_count": it.get("answer_count"),
+                    "tags": it.get("tags") or [],
+                },
+            }
+        )
+    return out
+
+
 def _github_fetch_repos(
     client: httpx.Client,
     query: str,
@@ -137,6 +250,71 @@ def _github_fetch_repos(
             }
         )
     return out
+
+
+def _round_robin_merge(groups: list[list[dict[str, Any]]], max_items: int) -> list[dict[str, Any]]:
+    pools = [list(g) for g in groups if g]
+    if not pools or max_items <= 0:
+        return []
+    merged: list[dict[str, Any]] = []
+    idx = 0
+    while pools and len(merged) < max_items:
+        idx = idx % len(pools)
+        pool = pools[idx]
+        if not pool:
+            pools.pop(idx)
+            continue
+        merged.append(pool.pop(0))
+        idx += 1
+    return merged
+
+
+def _collect_multisource_batch(
+    http: httpx.Client,
+    github_query: str,
+    github_token: str | None,
+) -> list[dict[str, Any]]:
+    hn_limit = int(os.environ.get("BLOG_HN_LIMIT", "12"))
+    gh_limit = int(os.environ.get("BLOG_GITHUB_LIMIT", "6"))
+    devto_limit = int(os.environ.get("BLOG_DEVTO_LIMIT", "6"))
+    reddit_limit = int(os.environ.get("BLOG_REDDIT_LIMIT", "6"))
+    so_limit = int(os.environ.get("BLOG_STACKOVERFLOW_LIMIT", "6"))
+
+    collectors: list[tuple[str, Any]] = [
+        ("hackernews", lambda: _hn_fetch_stories(http, limit=hn_limit)),
+        (
+            "github",
+            lambda: _github_fetch_repos(
+                http,
+                query=github_query,
+                limit=gh_limit,
+                token=github_token,
+            ),
+        ),
+        ("devto", lambda: _devto_fetch_articles(http, limit=devto_limit)),
+        ("reddit", lambda: _reddit_fetch_posts(http, limit=reddit_limit)),
+        ("stackoverflow", lambda: _stackoverflow_fetch_questions(http, limit=so_limit)),
+    ]
+
+    groups: list[list[dict[str, Any]]] = []
+    # Round-robin source order across runs so one source cannot dominate by position.
+    start_index = int(os.environ.get("BLOG_SOURCE_START_INDEX", "0"))
+    start_index = max(0, start_index) % len(collectors)
+    rotated = collectors[start_index:] + collectors[:start_index]
+    os.environ["BLOG_SOURCE_START_INDEX"] = str((start_index + 1) % len(collectors))
+
+    for source_name, fetcher in rotated:
+        try:
+            rows = fetcher()
+            logger.info("source=%s fetched=%s", source_name, len(rows))
+            if rows:
+                groups.append(rows)
+        except Exception as e:
+            # Keep going: one failed source should not break the ingest pipeline.
+            logger.warning("source=%s failed: %s", source_name, e)
+
+    max_candidates = int(os.environ.get("BLOG_MAX_CANDIDATES", "40"))
+    return _round_robin_merge(groups, max_items=max_candidates)
 
 
 def _topic_blocked_for_ingest(sb: Client, topic_key: str) -> bool:
@@ -240,15 +418,7 @@ def run_idea_ingest(
     tok = tok or os.environ.get("BLOG_GITHUB_TOKEN", "").strip() or None
 
     with httpx.Client() as http:
-        batch = _hn_fetch_stories(http, limit=int(os.environ.get("BLOG_HN_LIMIT", "12")))
-        batch.extend(
-            _github_fetch_repos(
-                http,
-                query=gh_q,
-                limit=int(os.environ.get("BLOG_GITHUB_LIMIT", "6")),
-                token=tok,
-            )
-        )
+        batch = _collect_multisource_batch(http=http, github_query=gh_q, github_token=tok)
 
     for raw in batch:
         try:
@@ -256,9 +426,20 @@ def run_idea_ingest(
                 model, gen_cfg, owner_name, portfolio_url, raw
             )
         except Exception as e:
-            logger.exception("gemini score failed for %s: %s", raw.get("source_id"), e)
-            errors += 1
-            continue
+            logger.warning(
+                "gemini score failed source=%s id=%s err=%s",
+                raw.get("source"),
+                raw.get("source_id"),
+                e,
+            )
+            # Fallback retry with shorter excerpt before giving up on this signal.
+            try:
+                raw_retry = dict(raw)
+                raw_retry["raw_excerpt"] = str(raw.get("raw_excerpt") or "")[:250]
+                scored = score_raw_item(model, gen_cfg, owner_name, portfolio_url, raw_retry)
+            except Exception:
+                errors += 1
+                continue
         if scored.get("skip") is True or str(scored.get("skip", "")).lower() in (
             "true",
             "1",

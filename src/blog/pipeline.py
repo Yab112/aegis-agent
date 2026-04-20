@@ -282,6 +282,50 @@ def _post_status_after_write() -> tuple[str, str | None]:
     return "draft", None
 
 
+def _resource_links_from_tags(tags: list[str], source_url: str | None = None) -> list[dict[str, str]]:
+    curated: dict[str, tuple[str, str]] = {
+        "python": ("Python Docs", "https://docs.python.org/3/"),
+        "fastapi": ("FastAPI Docs", "https://fastapi.tiangolo.com/"),
+        "ai": ("Google AI Studio Docs", "https://ai.google.dev/gemini-api/docs"),
+        "llm": ("LangChain Docs", "https://python.langchain.com/docs/introduction/"),
+        "langgraph": ("LangGraph Docs", "https://langchain-ai.github.io/langgraph/"),
+        "security": ("OWASP Top 10", "https://owasp.org/www-project-top-ten/"),
+        "postgres": ("PostgreSQL Docs", "https://www.postgresql.org/docs/"),
+        "supabase": ("Supabase Docs", "https://supabase.com/docs"),
+        "docker": ("Docker Docs", "https://docs.docker.com/"),
+        "testing": ("pytest Docs", "https://docs.pytest.org/"),
+    }
+    links: list[dict[str, str]] = []
+    if source_url:
+        links.append(
+            {
+                "title": "Inspiration Source",
+                "url": source_url,
+                "description": "Reference signal that inspired this post topic.",
+            }
+        )
+
+    seen_urls = {x["url"] for x in links}
+    for raw_tag in tags:
+        tag = str(raw_tag).strip().lower()
+        if not tag or tag not in curated:
+            continue
+        title, url = curated[tag]
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        links.append(
+            {
+                "title": title,
+                "url": url,
+                "description": f"Official docs related to {tag}.",
+            }
+        )
+        if len(links) >= 8:
+            break
+    return links
+
+
 def _pick_pending_blog_idea(client: Client) -> dict[str, Any] | None:
     """Oldest pending first within same skill tier (high before medium before low)."""
     r = client.table("blog_ideas").select("*").eq("status", "pending").execute()
@@ -332,6 +376,7 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
         if not isinstance(tags_idea, list):
             tags_idea = []
         tags_idea = [str(t).strip().lower() for t in tags_idea if str(t).strip()][:12]
+        source_url = str(idea_row.get("source_url") or "").strip() or None
         logger.info("blog draft using queued idea id=%s topic_key=%s", idea_id, topic_key)
     else:
         fallback = os.environ.get("BLOG_FALLBACK_GEMINI_IDEA", "true").strip().lower()
@@ -357,6 +402,7 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
         if not isinstance(tags_idea, list):
             tags_idea = []
         tags_idea = [str(t).strip().lower() for t in tags_idea if str(t).strip()][:12]
+        source_url = None
 
     if _topic_exists(client, topic_key):
         logger.info("blog draft skipped: topic_key already exists (%s)", topic_key)
@@ -394,6 +440,7 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
     if not isinstance(tags, list):
         tags = tags_idea
     tags = [str(t).strip().lower() for t in tags if str(t).strip()][:16]
+    resource_links = _resource_links_from_tags(tags, source_url=source_url)
 
     body_text = model.generate_content(
         WRITE_BODY_PROMPT.format(
@@ -421,6 +468,7 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
         "status": post_status,
         "tags": tags,
         "topic_key": topic_key,
+        "resource_links": resource_links,
         "published_at": published_at,
         "image_url": cfg.default_og_image_url,
         "og_image_url": cfg.default_og_image_url,

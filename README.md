@@ -136,6 +136,7 @@ aegis-agent/
 | `POST` | `/chat` | Main chat endpoint |
 | `GET` | `/chat-ui` | Browser chat tester (serves `public/chat.html`) |
 | `GET` | `/blog` | List published blog posts |
+| `GET` | `/blog/topics` | List blog topics/tags with counts |
 | `GET` | `/blog/{slug}` | Single blog post by slug |
 | `POST` | `/internal/blog/generate-draft` | Trigger blog draft generation (auth required) |
 | `GET` | `/docs` | Interactive Swagger UI |
