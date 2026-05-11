@@ -9,6 +9,7 @@ create table if not exists public.handoff_telegram_alerts (
   session_id            text not null,
   visitor_email         text,
   user_query              text not null default '',
+  intent                  text,
   constraint handoff_telegram_alerts_chat_msg_unique
     unique (telegram_chat_id, telegram_message_id)
 );
@@ -28,5 +29,9 @@ create policy "Service role full access handoff_telegram_alerts"
   with check (true);
 
 grant select, insert, update, delete on public.handoff_telegram_alerts to service_role;
+
+-- Existing projects that created this table before ``intent`` existed:
+alter table public.handoff_telegram_alerts
+  add column if not exists intent text;
 
 notify pgrst, 'reload schema';

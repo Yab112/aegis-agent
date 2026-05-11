@@ -10,13 +10,19 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
 from fastapi import APIRouter, HTTPException, Request
 
 from config.settings import get_settings
-from src.tools.calendar_tool import CalendarOAuthError, send_gmail_plain_text
+from src.tools.calendar_tool import CalendarOAuthError, send_gmail_multipart
 from src.tools.handoff_tool import send_telegram_thread_reply
 from src.tools.lead_tool import fetch_handoff_telegram_alert
+from src.tools.visitor_reply_email import (
+    build_branded_visitor_email_html,
+    build_branded_visitor_email_plain,
+    polish_owner_reply_for_visitor_email,
+)
 
 logger = logging.getLogger("aegis.telegram_webhook")
 
@@ -93,6 +99,8 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
     visitor_email = row.get("visitor_email")
     session_id = str(row.get("session_id") or "")
     prior_q = str(row.get("user_query") or "")[:800]
+    intent_tag = str(row.get("intent") or "handoff").strip()[:120] or "handoff"
+    session_short = session_id[:8] if len(session_id) >= 8 else (session_id or "—")
 
     if not _valid_visitor_email(visitor_email):
         send_telegram_thread_reply(
@@ -106,21 +114,34 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
         return {"ok": True}
 
     subject = f"Message from {settings.owner_name} (portfolio)"
-    mail_body = (
-        f"Hi,\n\n"
-        f"{settings.owner_name} asked me to pass this along regarding your "
-        f"message on {settings.portfolio_url}:\n\n"
-        f"---\n{owner_text}\n---\n\n"
-        f"Your earlier question (summary):\n{prior_q}\n\n"
-        f"— {settings.assistant_name}\n"
-        f"(session {session_id[:8]}…)\n"
+
+    t0 = time.perf_counter()
+    polished = polish_owner_reply_for_visitor_email(
+        settings=settings,
+        owner_draft=owner_text,
+        visitor_question=prior_q,
+        intent=intent_tag,
+    )
+    if not (polished or "").strip():
+        polished = owner_text
+
+    text_body = build_branded_visitor_email_plain(
+        settings=settings,
+        polished_plain_body=polished,
+        session_short=session_short,
+    )
+    html_body = build_branded_visitor_email_html(
+        settings=settings,
+        polished_plain_body=polished,
+        session_short=session_short,
     )
 
     try:
-        sent = send_gmail_plain_text(
+        sent = send_gmail_multipart(
             to_addr=str(visitor_email).strip(),
             subject=subject,
-            body=mail_body,
+            text_body=text_body,
+            html_body=html_body,
         )
     except CalendarOAuthError:
         logger.exception("telegram webhook: Gmail OAuth failed")
@@ -133,6 +154,15 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
             ),
         )
         return {"ok": True}
+
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    logger.info(
+        "telegram visitor email: session=%s ok=%s ms=%.0f polish=%s",
+        session_short,
+        sent,
+        elapsed_ms,
+        settings.visitor_reply_email_polish,
+    )
 
     if sent:
         send_telegram_thread_reply(

@@ -212,6 +212,7 @@ def handoff_node(state: AgentState) -> dict:
             session_id=state["session_id"],
             visitor_email=user_email,
             user_query=state["user_query"],
+            intent=state.get("intent") or "handoff",
         )
 
     tool_calls = state.get("tool_calls", []) + ["handoff"]

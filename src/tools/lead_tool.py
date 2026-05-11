@@ -74,6 +74,7 @@ def register_handoff_telegram_alert(
     session_id: str,
     visitor_email: str | None,
     user_query: str,
+    intent: str | None = None,
 ) -> None:
     """
     Persist Telegram message_id for the lead alert so ``POST /telegram/webhook`` can
@@ -81,15 +82,16 @@ def register_handoff_telegram_alert(
     """
     try:
         client = get_client()
-        client.table("handoff_telegram_alerts").insert(
-            {
-                "telegram_chat_id": str(telegram_chat_id).strip(),
-                "telegram_message_id": int(telegram_message_id),
-                "session_id": session_id,
-                "visitor_email": (visitor_email or "").strip() or None,
-                "user_query": (user_query or "")[:4000],
-            },
-        ).execute()
+        row = {
+            "telegram_chat_id": str(telegram_chat_id).strip(),
+            "telegram_message_id": int(telegram_message_id),
+            "session_id": session_id,
+            "visitor_email": (visitor_email or "").strip() or None,
+            "user_query": (user_query or "")[:4000],
+        }
+        if intent:
+            row["intent"] = str(intent).strip()[:120]
+        client.table("handoff_telegram_alerts").insert(row).execute()
     except Exception as e:
         _log.warning("handoff_telegram_alerts insert failed: %s", e)
 
@@ -102,7 +104,7 @@ def fetch_handoff_telegram_alert(
         client = get_client()
         r = (
             client.table("handoff_telegram_alerts")
-            .select("session_id, visitor_email, user_query")
+            .select("session_id, visitor_email, user_query, intent")
             .eq("telegram_chat_id", str(telegram_chat_id).strip())
             .eq("telegram_message_id", int(telegram_message_id))
             .limit(1)

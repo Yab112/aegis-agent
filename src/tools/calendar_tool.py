@@ -353,3 +353,35 @@ def send_gmail_plain_text(*, to_addr: str, subject: str, body: str) -> bool:
     except Exception as e:
         logger.exception("gmail: send failed: %s", e)
         return False
+
+
+def send_gmail_multipart(
+    *,
+    to_addr: str,
+    subject: str,
+    text_body: str,
+    html_body: str,
+) -> bool:
+    """
+    Send multipart/alternative (plain + HTML) from the OAuth-connected Google account.
+    """
+    to_addr = (to_addr or "").strip()
+    if not to_addr:
+        return False
+    try:
+        creds = _get_credentials()
+        service = build("gmail", "v1", credentials=creds)
+        msg = EmailMessage()
+        msg["To"] = to_addr
+        msg["Subject"] = (subject or "Message from portfolio").strip() or "Message from portfolio"
+        msg.set_content(text_body or "", subtype="plain", charset="utf-8")
+        msg.add_alternative(html_body or "", subtype="html", charset="utf-8")
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+        service.users().messages().send(userId="me", body={"raw": raw}).execute()
+        logger.info("gmail: sent multipart to=%s", to_addr[:3] + "…")
+        return True
+    except RefreshError as e:
+        _reraise_refresh_as_clear(e)
+    except Exception as e:
+        logger.exception("gmail: multipart send failed: %s", e)
+        return False
