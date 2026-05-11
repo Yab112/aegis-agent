@@ -18,7 +18,7 @@ from config.settings import get_settings
 from src.tools.calendar_tool import CalendarOAuthError, send_gmail_multipart
 from src.tools.handoff_tool import send_telegram_thread_reply
 from src.tools.lead_tool import fetch_handoff_telegram_alert
-from src.tools.visitor_reply_email import (
+from src.email_templates import (
     build_branded_visitor_email_html,
     build_branded_visitor_email_plain,
     polish_owner_reply_for_visitor_email,
