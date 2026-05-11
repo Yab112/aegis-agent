@@ -119,12 +119,34 @@ class Settings(BaseSettings):
 
     # HTML email to visitors (Telegram reply relay): HTTPS logo URL (e.g. Cloudinary or site static).
     email_brand_logo_url: str | None = None
+    # One line under the logo (value prop / positioning).
+    email_brand_tagline: str | None = None
+    # Optional second button (e.g. Calendly, /contact). Label defaults to "Book a call" when URL is set.
+    email_brand_secondary_cta_url: str | None = None
+    email_brand_secondary_cta_label: str | None = None
+    email_brand_linkedin_url: str | None = None
+    email_brand_github_url: str | None = None
     # When true, Gemini rewrites your Telegram draft into a professional email body before send.
     visitor_reply_email_polish: bool = True
 
     @field_validator("email_brand_logo_url", mode="before")
     @classmethod
     def strip_email_logo(cls, v: object) -> object:
+        if isinstance(v, str):
+            s = v.strip()
+            return s or None
+        return v
+
+    @field_validator(
+        "email_brand_tagline",
+        "email_brand_secondary_cta_url",
+        "email_brand_secondary_cta_label",
+        "email_brand_linkedin_url",
+        "email_brand_github_url",
+        mode="before",
+    )
+    @classmethod
+    def strip_email_brand_optional(cls, v: object) -> object:
         if isinstance(v, str):
             s = v.strip()
             return s or None
