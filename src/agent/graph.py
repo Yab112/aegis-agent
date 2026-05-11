@@ -51,7 +51,7 @@ def build_graph() -> StateGraph:
     graph.add_edge("handoff", "observe")
 
     # Always respond after a tool — never chain back to handoff from RAG/calendar.
-    # WhatsApp handoff only happens when router classifies intent "handoff" (rates, payment, etc.).
+    # Telegram handoff only happens when router classifies intent "handoff" (rates, payment, etc.).
     graph.add_edge("observe", "respond")
 
     # Respond → end

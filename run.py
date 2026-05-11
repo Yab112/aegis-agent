@@ -59,7 +59,7 @@ def main() -> None:
 
     config = Config()
     config.bind = [f"{args.host}:{args.port}"]
-    config.accesslog = "-"
+    config.accesslog = None  # AegisASGILogMiddleware logs each request once
     config.errorlog = "-"
     asyncio.run(serve(app, config))
 

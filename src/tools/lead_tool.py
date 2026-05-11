@@ -67,6 +67,54 @@ def upsert_session(session_id: str, messages: list[dict], user_email: str | None
         _log.warning("Session upsert failed: %s", e)
 
 
+def register_handoff_telegram_alert(
+    *,
+    telegram_chat_id: str,
+    telegram_message_id: int,
+    session_id: str,
+    visitor_email: str | None,
+    user_query: str,
+) -> None:
+    """
+    Persist Telegram message_id for the lead alert so ``POST /telegram/webhook`` can
+    correlate owner replies (reply-in-thread) to ``visitor_email``.
+    """
+    try:
+        client = get_client()
+        client.table("handoff_telegram_alerts").insert(
+            {
+                "telegram_chat_id": str(telegram_chat_id).strip(),
+                "telegram_message_id": int(telegram_message_id),
+                "session_id": session_id,
+                "visitor_email": (visitor_email or "").strip() or None,
+                "user_query": (user_query or "")[:4000],
+            },
+        ).execute()
+    except Exception as e:
+        _log.warning("handoff_telegram_alerts insert failed: %s", e)
+
+
+def fetch_handoff_telegram_alert(
+    telegram_chat_id: str,
+    telegram_message_id: int,
+) -> dict | None:
+    try:
+        client = get_client()
+        r = (
+            client.table("handoff_telegram_alerts")
+            .select("session_id, visitor_email, user_query")
+            .eq("telegram_chat_id", str(telegram_chat_id).strip())
+            .eq("telegram_message_id", int(telegram_message_id))
+            .limit(1)
+            .execute()
+        )
+        rows = r.data or []
+        return rows[0] if rows else None
+    except Exception as e:
+        _log.warning("handoff_telegram_alerts select failed: %s", e)
+        return None
+
+
 def load_session(session_id: str) -> list[dict]:
     """Load prior conversation messages for a session."""
     try:

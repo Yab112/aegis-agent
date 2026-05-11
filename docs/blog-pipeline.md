@@ -39,8 +39,8 @@ Existing `draft` → `review` → `published`. **`scheduled_publish_at`** (optio
 
 | Workflow | File | When | What |
 |----------|------|------|------|
-| **Blog ideas ingest** | [`.github/workflows/blog-ideas.yml`](../.github/workflows/blog-ideas.yml) | Sun/Wed 10:00 UTC + manual | HN + GitHub search → Gemini scores vs `BLOG_FOCUS_TAGS` → inserts `blog_ideas` |
-| **Blog draft** | [`.github/workflows/blog-draft.yml`](../.github/workflows/blog-draft.yml) | Every other day 09:00 UTC (`0 9 */2 * *`) + manual | Picks oldest **pending** idea (skill tier), writes post; if queue empty and `BLOG_FALLBACK_GEMINI_IDEA` is true (default), uses Gemini-only idea. **`BLOG_POST_STATUS_AFTER_WRITE`** (see below) controls `draft` / `review` / **`published`** (live immediately). |
+| **Blog ideas ingest** | [`.github/workflows/blog-ideas.yml`](../.github/workflows/blog-ideas.yml) | Sun/Wed 10:00 UTC + manual | Multi-source round-robin (HN, GitHub, Dev.to, Reddit, Stack Overflow) with per-source fallback → Gemini scores vs `BLOG_FOCUS_TAGS` → inserts `blog_ideas` |
+| **Blog draft** | [`.github/workflows/blog-draft.yml`](../.github/workflows/blog-draft.yml) | Every 5 days 09:00 UTC (`0 9 */5 * *`) + manual | Picks oldest **pending** idea (skill tier), writes post, generates an image prompt + cover image via Gemini, uploads to Cloudinary, then inserts post. If queue empty and `BLOG_FALLBACK_GEMINI_IDEA` is true (default), uses Gemini-only idea. **`BLOG_POST_STATUS_AFTER_WRITE`** (see below) controls `draft` / `review` / **`published`** (live immediately). |
 | **Blog publish** | [`.github/workflows/blog-publish.yml`](../.github/workflows/blog-publish.yml) | Daily 12:00 UTC + manual | `review` → `published` only (see below) |
 
 ---
@@ -50,9 +50,16 @@ Existing `draft` → `review` → `published`. **`scheduled_publish_at`** (optio
 **Ideas ingest** (`blog_ideas_ingest.py`):
 
 - Required: `GEMINI_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
-- Optional: `GEMINI_MODEL`, `OWNER_NAME`, `PORTFOLIO_URL`, `BLOG_FOCUS_TAGS` (comma-separated focus areas), `BLOG_GITHUB_SEARCH_QUERY`, `BLOG_GITHUB_TOKEN`, `GITHUB_TOKEN` (Actions default helps GitHub API rate limits), `BLOG_HN_LIMIT`, `BLOG_GITHUB_LIMIT`
+- Optional: `GEMINI_MODEL`, `OWNER_NAME`, `PORTFOLIO_URL`, `BLOG_FOCUS_TAGS` (comma-separated focus areas), `BLOG_GITHUB_SEARCH_QUERY`, `BLOG_GITHUB_TOKEN`, `GITHUB_TOKEN` (Actions default helps GitHub API rate limits), `BLOG_HN_LIMIT`, `BLOG_GITHUB_LIMIT`, `BLOG_DEVTO_LIMIT`, `BLOG_REDDIT_LIMIT`, `BLOG_STACKOVERFLOW_LIMIT`, `BLOG_MAX_CANDIDATES`
 
 **Draft** (`blog_draft.py`): optional `BLOG_FALLBACK_GEMINI_IDEA` (`true`/`false`) — if `false` and no pending ideas, job returns `no_pending_ideas` without calling Gemini.
+
+**Draft image generation** (same `blog-draft.yml` schedule):
+
+- `BLOG_GENERATE_IMAGES` (default `true`) — enable/disable generated covers.
+- `BLOG_IMAGE_MODEL` (default `gemini-2.5-flash-image`) — Gemini **native image** model; the pipeline requests image output modality.
+- `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `CLOUDINARY_FOLDER` — upload destination.
+- If Cloudinary or image generation fails, pipeline falls back to `BLOG_DEFAULT_OG_IMAGE` and still inserts the post (you may still see `image_prompt` filled from the text step).
 
 **Post status (no manual review):** `BLOG_POST_STATUS_AFTER_WRITE`:
 
@@ -64,7 +71,27 @@ Existing `draft` → `review` → `published`. **`scheduled_publish_at`** (optio
 
 The scheduled workflow sets `BLOG_POST_STATUS_AFTER_WRITE=published` so runs are fully hands-off. Override locally with `draft` or `review` if you want a gate.
 
+**Publish webhook (optional):** called when a post transitions to `published` (either direct publish from draft pipeline or review publish job).
+
+- `BLOG_PUBLISH_WEBHOOK_URL` — destination URL.
+- `BLOG_PUBLISH_WEBHOOK_SECRET` — optional HMAC secret; signature is sent in `X-Aegis-Signature`.
+- `BLOG_PUBLISH_WEBHOOK_TIMEOUT_SECONDS` — request timeout (default 10).
+- `BLOG_PUBLISH_WEBHOOK_MAX_ATTEMPTS` — retry attempts (default 3).
+- `BLOG_PUBLISH_WEBHOOK_BACKOFF_SECONDS` — linear backoff base (default 2).
+
+Event payload key points:
+
+- `event`: `blog_post_published`
+- `source`: `draft_pipeline` or `review_publish_job`
+- `post`: id, slug, title, topic_key, published_at, tags, image_url
+
 **Publish** (`blog_publish_reviewed.py`): `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` only (no Gemini).
+
+### Debugging covers and CI
+
+- **`image_prompt` set but site shows default OG image** — the text model always writes the visual brief; the cover still needs (1) Gemini returning **inline image bytes** and (2) **Cloudinary** upload. Check Render/Actions logs for `cover image:` / `cloudinary` / `blog cover: slug=… using fallback`.
+- **Dead-letter table** (after running [`scripts/supabase_blog_ideas.sql`](../scripts/supabase_blog_ideas.sql)): `select id, created_at, stage, error_message, slug from public.blog_pipeline_failures order by created_at desc limit 20;` — look for `cover_generation` or `insert_post`.
+- **GitHub Actions**: repository **Actions** tab → **Blog draft (scheduled)** → latest run → open **Generate blog draft** step; green checkmark only means the script exited 0 (a post can still use the fallback image).
 
 ---
 
@@ -102,5 +129,7 @@ Published posts only: see [blog-api.md](blog-api.md).
 
 ## 8. Legal / quality notes
 
-- Ingest uses **HN Firebase API** and **GitHub Search API**; snippets are short. Do not paste third-party articles wholesale; drafts should be **original** with optional “inspired by” links.
-- Add Stack Overflow / Reddit / Dev.to collectors later using their **official APIs** and the same Gemini scoring pattern in [`src/blog/idea_ingest.py`](../src/blog/idea_ingest.py).
+- Ingest uses official/public APIs from **HN**, **GitHub**, **Dev.to**, **Reddit**, and **Stack Overflow** with isolated `try/except` per source. One source failing does not stop ingestion.
+- Candidates are merged in **round-robin** order to avoid over-dependence on a single source and reduce scraping-pattern risk.
+- Drafted posts now include `resource_links` JSON for "learn more" references (inspiration URL + curated docs by tag).
+- Snippets are short; do not paste third-party articles wholesale. Keep drafts original with attribution where relevant.

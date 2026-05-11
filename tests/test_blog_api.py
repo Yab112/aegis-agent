@@ -5,7 +5,7 @@ from copy import deepcopy
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.api.blog_routes import router as blog_router
+from src.api.blog_routes import _public_image_urls, router as blog_router
 import src.api.blog_routes as blog_routes
 
 
@@ -176,6 +176,14 @@ def _sample_posts():
     ]
 
 
+def test_public_image_urls_falls_back_when_row_empty():
+    d = "https://cdn.example.com/default-og.png"
+    assert _public_image_urls({}, d) == (d, d)
+    assert _public_image_urls({"image_url": "", "og_image_url": ""}, d) == (d, d)
+    row = {"image_url": "https://cdn.example.com/cover.png", "og_image_url": None}
+    assert _public_image_urls(row, d) == ("https://cdn.example.com/cover.png", "https://cdn.example.com/cover.png")
+
+
 def test_list_blog_posts_topic_filter():
     client = _build_test_client(_sample_posts())
 
@@ -212,3 +220,18 @@ def test_blog_detail_includes_resource_links_and_related_posts():
     assert body["topic_key"] == "fastapi_routing"
     assert body["resource_links"][0]["url"] == "https://fastapi.tiangolo.com/"
     assert any(x["slug"] == "agentic-rag-evals" for x in body["related_posts"])
+
+
+def test_blog_search_returns_matching_published_posts():
+    client = _build_test_client(_sample_posts())
+
+    r = client.get("/blog/search", params={"q": "fastapi", "page": 1, "page_size": 10})
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["query"] == "fastapi"
+    assert body["total"] == 2
+    assert [x["slug"] for x in body["items"]] == [
+        "fastapi-routing-patterns",
+        "agentic-rag-evals",
+    ]

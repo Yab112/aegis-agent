@@ -16,5 +16,5 @@ COPY . .
 
 EXPOSE 8000
 
-# Hypercorn matches local `hypercorn src.api.main:app` (access logs to stdout)
-CMD ["hypercorn", "src.api.main:app", "--bind", "0.0.0.0:8000", "--workers", "1", "--access-logfile", "-", "--error-logfile", "-"]
+# Request lines: AegisASGILogMiddleware only (avoids duplicate Hypercorn access lines).
+CMD ["hypercorn", "src.api.main:app", "--bind", "0.0.0.0:8000", "--workers", "1", "--error-logfile", "-"]

@@ -51,8 +51,29 @@ create unique index if not exists blog_ideas_topic_key_pending_unique
   on public.blog_ideas (topic_key)
   where status = 'pending';
 
--- ─── 3. RLS (internal only; service_role bypasses) ────────────────────────────
+-- ─── 3. dead-letter failures for pipeline observability ──────────────────────
+create table if not exists public.blog_pipeline_failures (
+  id                uuid primary key default gen_random_uuid(),
+  created_at        timestamptz not null default now(),
+  stage             text not null,
+  error_message     text not null,
+  payload           jsonb not null default '{}'::jsonb,
+  pipeline_run_key  text,
+  topic_key         text,
+  slug              text,
+  blog_idea_id      uuid references public.blog_ideas (id) on delete set null
+);
+
+create index if not exists blog_pipeline_failures_created
+  on public.blog_pipeline_failures (created_at desc);
+
+create index if not exists blog_pipeline_failures_run_key
+  on public.blog_pipeline_failures (pipeline_run_key)
+  where pipeline_run_key is not null;
+
+-- ─── 4. RLS (internal only; service_role bypasses) ────────────────────────────
 alter table public.blog_ideas enable row level security;
+alter table public.blog_pipeline_failures enable row level security;
 
 drop policy if exists "Service role full access blog_ideas" on public.blog_ideas;
 create policy "Service role full access blog_ideas"
@@ -62,6 +83,15 @@ create policy "Service role full access blog_ideas"
   using (true)
   with check (true);
 
+drop policy if exists "Service role full access blog_pipeline_failures" on public.blog_pipeline_failures;
+create policy "Service role full access blog_pipeline_failures"
+  on public.blog_pipeline_failures
+  for all
+  to service_role
+  using (true)
+  with check (true);
+
 grant select, insert, update, delete on public.blog_ideas to service_role;
+grant select, insert, update, delete on public.blog_pipeline_failures to service_role;
 
 notify pgrst, 'reload schema';

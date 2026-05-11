@@ -38,6 +38,9 @@ jobs:
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
           CLOUDINARY_FOLDER: "blog"
+          BLOG_PIPELINE_RUN_KEY: "blog-draft-${{ github.run_id }}"
+          BLOG_PUBLISH_WEBHOOK_URL: ${{ secrets.BLOG_PUBLISH_WEBHOOK_URL }}
+          BLOG_PUBLISH_WEBHOOK_SECRET: ${{ secrets.BLOG_PUBLISH_WEBHOOK_SECRET }}
           BLOG_MAX_OUTPUT_TOKENS: "8192"
           # draft | review | published — published = live on site immediately (no manual review)
           BLOG_POST_STATUS_AFTER_WRITE: "published"

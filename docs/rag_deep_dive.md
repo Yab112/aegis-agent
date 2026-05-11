@@ -155,11 +155,11 @@ code snippets. Gemini 1.5 Flash can generate 1024 tokens in ~1–2 seconds.
 
 | Failure | Detection | Mitigation |
 |---|---|---|
-| Low retrieval confidence | similarity < 0.72 | Trigger WhatsApp handoff |
+| Low retrieval confidence | similarity < 0.72 | Admit uncertainty (router does not auto-handoff on low RAG alone) |
 | HF API rate limit | 429 response | Exponential backoff, up to 5 retries |
 | No chunks returned | empty result set | Handoff immediately |
 | Gemini quota hit | API error | Log + return graceful error message |
-| WhatsApp send failure | Exception caught | Log, don't crash — user still gets response |
+| Telegram send failure | Exception caught | Log, don't crash — user still gets response |
 
 ---
 

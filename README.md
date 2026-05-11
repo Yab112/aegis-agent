@@ -1,6 +1,6 @@
 # Aegis-Agent — Autonomous Portfolio Concierge
 
-> An agentic RAG system that runs **yabibal.site** — answering client questions, booking Google Meet calls, escalating sensitive leads to WhatsApp, and auto-generating blog drafts. Built entirely on free-tier infrastructure.
+> An agentic RAG system that runs **yabibal.site** — answering client questions, booking Google Meet calls, escalating sensitive leads to Telegram, and auto-generating blog drafts. Built entirely on free-tier infrastructure.
 
 **Live site:** [yabibal.site](https://yabibal.site) · **Contact / custom work:** [yabibal.site](https://yabibal.site)
 
@@ -12,7 +12,7 @@
 |---|---|
 | **Intelligent Q&A** | Answers questions about Yabibal's projects, skills, and background using RAG over a curated knowledge base |
 | **Calendar & Meet booking** | Checks live Google Calendar availability and generates confirmed Google Meet links |
-| **WhatsApp handoff** | Captures leads and sends a structured briefing via WhatsApp Cloud API when commercial topics (rates, contracts, hiring) are detected |
+| **Telegram handoff** | Sends a lead briefing to your Telegram; **reply in-thread** to email the visitor (Gmail) when their email was captured |
 | **Auto blog drafts** | Scheduled GitHub Action proposes a topic, writes a full Markdown post with Gemini, and inserts it into Supabase as a draft |
 | **Lead CRM** | Logs every visitor email, intent, and conversation turn to Supabase |
 | **Session memory** | Remembers context within a conversation so follow-up questions work naturally |
@@ -30,7 +30,7 @@ User → yabibal.site (Next.js chat widget)
        LangGraph agent  ──  router_node (Gemini classifies intent)
          ├── RAG node        → Supabase pgvector (BGE-small embeddings)
          ├── Calendar node   → Google Calendar API + Google Meet
-         └── Handoff node    → WhatsApp Cloud API
+         └── Handoff node    → Telegram Bot API
          ↓     ↓     ↓
        observe_node → respond_node → END
          ↓
@@ -45,7 +45,7 @@ The router classifies every message into one of three intents using Gemini (with
 |---|---|---|
 | `general_qa` | Greetings, skills, projects, background | RAG → Gemini response |
 | `book_meeting` | Scheduling, availability | Google Calendar → Meet link |
-| `handoff` | Rates, contracts, salary, payment | Capture lead → WhatsApp briefing |
+| `handoff` | Rates, contracts, salary, payment | Telegram alert → you reply in-thread → Gmail to visitor (if email known) |
 
 ---
 
@@ -60,7 +60,7 @@ The router classifies every message into one of three intents using Gemini (with
 | Vector DB | Supabase pgvector | Free tier |
 | Leads / Sessions / Blog | Supabase PostgreSQL | Free tier |
 | Calendar + Meet | Google Calendar API + Gmail API | Free |
-| Handoff | WhatsApp Cloud API | Free (1 000 msgs/mo) |
+| Handoff | Telegram Bot API | Free (bots) |
 | Automation | GitHub Actions (2 workflows) | Free (2 000 min/mo) |
 | Frontend | Next.js on Vercel | Free tier |
 
@@ -85,7 +85,7 @@ aegis-agent/
 │   ├── tools/
 │   │   ├── rag_tool.py       # LangGraph-compatible RAG tool
 │   │   ├── calendar_tool.py  # Google Calendar + Meet tool
-│   │   ├── handoff_tool.py   # WhatsApp Cloud API handoff
+│   │   ├── handoff_tool.py   # Telegram Bot API handoff
 │   │   └── lead_tool.py      # Supabase lead logger + session store
 │   ├── blog/
 │   │   └── pipeline.py       # Scheduled blog draft pipeline (topic → write → insert)
@@ -109,7 +109,7 @@ aegis-agent/
 │   ├── architecture.md
 │   ├── rag_deep_dive.md
 │   ├── supabase_setup.md
-│   ├── whatsapp_setup.md
+│   ├── telegram_setup.md
 │   ├── google_apis_setup.md
 │   └── deployment.md
 ├── public/
@@ -132,14 +132,19 @@ aegis-agent/
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/` | Service index with all endpoint links |
-| `GET` | `/health` | Health check |
+| `GET` | `/health` | Compatibility health endpoint (includes readiness) |
+| `GET` | `/health/livez` | Liveness probe |
+| `GET` | `/health/readyz` | Readiness probe with dependency checks |
 | `POST` | `/chat` | Main chat endpoint |
 | `GET` | `/chat-ui` | Browser chat tester (serves `public/chat.html`) |
 | `GET` | `/blog` | List published blog posts |
 | `GET` | `/blog/topics` | List blog topics/tags with counts |
+| `GET` | `/blog/search` | Search published blog posts |
 | `GET` | `/blog/{slug}` | Single blog post by slug |
 | `POST` | `/internal/blog/generate-draft` | Trigger blog draft generation (auth required) |
 | `GET` | `/docs` | Interactive Swagger UI |
+
+Versioning: all public endpoints above also have `/v1` aliases (for example `/v1/chat`, `/v1/blog`, `/v1/health/readyz`).
 
 ---
 
@@ -157,13 +162,17 @@ Required secrets: `GEMINI_API_KEY`, `HF_API_TOKEN`, `EMBEDDING_MODEL`, `SUPABASE
 
 ### `blog-draft.yml` — Scheduled blog draft generation
 
-Runs every other day at 09:00 UTC (or on demand). Uses Gemini to propose a topic, write a full article, and insert it into Supabase as a draft.
+Runs every 5 days at 09:00 UTC (or on demand). Uses Gemini to propose a topic, write a full article, generate/upload a cover image, and insert into Supabase.
 
 ```
-cron: "0 9 */2 * *" ──► checkout → install → python scripts/blog_draft.py
+cron: "0 9 */5 * *" ──► checkout → install → python scripts/blog_draft.py
 ```
 
-Required secrets: all of the above plus `GEMINI_MODEL`, `OWNER_NAME`, `PORTFOLIO_URL`, `BLOG_DEFAULT_OG_IMAGE`, `BLOG_IMAGE_MODEL`, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `CLOUDINARY_FOLDER`
+Required secrets: all of the above plus `GEMINI_MODEL`, `OWNER_NAME`, `PORTFOLIO_URL`, `BLOG_DEFAULT_OG_IMAGE`, `BLOG_IMAGE_MODEL`, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `CLOUDINARY_FOLDER`, optional `BLOG_PUBLISH_WEBHOOK_URL`, optional `BLOG_PUBLISH_WEBHOOK_SECRET`
+
+### `blog-publish.yml` — Publish reviewed posts
+
+Runs daily at 12:00 UTC (or on demand). Promotes `review` posts to `published` and emits optional publish webhook events.
 
 > Want more automation? Reach out at [yabibal.site](https://yabibal.site) and I'll add it.
 
@@ -228,7 +237,7 @@ See `.env.example` for all required variables. Key groups:
 | Embeddings | `HF_API_TOKEN`, `EMBEDDING_MODEL`, `EMBEDDING_DIM` |
 | Supabase | `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` |
 | Google Calendar / Gmail | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `GOOGLE_CALENDAR_ID`, `CALENDAR_TIMEZONE` |
-| WhatsApp | `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_RECIPIENT_NUMBER` |
+| Telegram | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, optional `TELEGRAM_WEBHOOK_SECRET` (recommended) |
 | RAG tuning | `RAG_TOP_K`, `RAG_CONFIDENCE_THRESHOLD`, `RAG_CHUNK_SIZE`, `RAG_CHUNK_OVERLAP` |
 | API | `API_SECRET_KEY`, `ALLOWED_ORIGINS`, `PORT`, `LOG_LEVEL` |
 | Portfolio owner | `OWNER_NAME`, `OWNER_ROLE`, `PORTFOLIO_URL`, `ASSISTANT_NAME` |
@@ -240,7 +249,7 @@ See `.env.example` for all required variables. Key groups:
 - [Architecture deep dive](docs/architecture.md)
 - [RAG system explained](docs/rag_deep_dive.md)
 - [Supabase setup](docs/supabase_setup.md)
-- [WhatsApp Cloud API setup](docs/whatsapp_setup.md)
+- [Telegram handoff setup](docs/telegram_setup.md)
 - [Google APIs setup](docs/google_apis_setup.md)
 - [Deployment to Koyeb](docs/deployment.md)
 

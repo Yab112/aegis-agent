@@ -26,6 +26,7 @@ create table if not exists public.blog_posts (
   canonical_url   text,
   resource_links  jsonb not null default '[]'::jsonb,
   image_prompt    text,
+  pipeline_run_key text,
 
   -- For dedup / pipeline: stable key from your "trend → idea" step (normalized topic)
   topic_key       text,
@@ -43,6 +44,9 @@ alter table public.blog_posts
 alter table public.blog_posts
   add column if not exists image_prompt text;
 
+alter table public.blog_posts
+  add column if not exists pipeline_run_key text;
+
 create index if not exists blog_posts_published_at_desc
   on public.blog_posts (published_at desc nulls last)
   where status = 'published';
@@ -53,6 +57,10 @@ create index if not exists blog_posts_status_created
 create index if not exists blog_posts_topic_key
   on public.blog_posts (topic_key)
   where topic_key is not null;
+
+create unique index if not exists blog_posts_pipeline_run_key_unique
+  on public.blog_posts (pipeline_run_key)
+  where pipeline_run_key is not null;
 
 -- Keep updated_at fresh on row change
 create or replace function public.set_blog_posts_updated_at()
