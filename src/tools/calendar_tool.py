@@ -11,8 +11,10 @@ APIs used (all free):
 """
 from __future__ import annotations
 
+import base64
 import logging
 from datetime import date, datetime, time as dt_time, timedelta, timezone
+from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
 from google.auth.exceptions import RefreshError
@@ -325,3 +327,29 @@ def create_meet_link(slot: dict, attendee_email: str | None = None) -> str | Non
     except Exception as e:
         logger.exception("calendar: events.insert failed: %s", e)
         return None
+
+
+def send_gmail_plain_text(*, to_addr: str, subject: str, body: str) -> bool:
+    """
+    Send a plain-text email from the OAuth-connected Google account (gmail.send scope).
+    Used for visitor follow-up when the owner replies to a Telegram handoff thread.
+    """
+    to_addr = (to_addr or "").strip()
+    if not to_addr:
+        return False
+    try:
+        creds = _get_credentials()
+        service = build("gmail", "v1", credentials=creds)
+        msg = EmailMessage()
+        msg["To"] = to_addr
+        msg["Subject"] = (subject or "Message from portfolio").strip() or "Message from portfolio"
+        msg.set_content(body or "")
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+        service.users().messages().send(userId="me", body={"raw": raw}).execute()
+        logger.info("gmail: sent plain text to=%s", to_addr[:3] + "…")
+        return True
+    except RefreshError as e:
+        _reraise_refresh_as_clear(e)
+    except Exception as e:
+        logger.exception("gmail: send failed: %s", e)
+        return False

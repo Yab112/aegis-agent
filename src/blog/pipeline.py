@@ -13,16 +13,19 @@ import time
 import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 import requests
 from supabase import Client, create_client
+
+from src.blog.publish_webhook import notify_blog_post_published
 
 logger = logging.getLogger("aegis.blog")
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore", category=FutureWarning)
     import google.generativeai as genai
+    from google.generativeai import protos as genai_protos
 
 
 IDEA_PROMPT = """You suggest ONE technical blog post idea for {owner_name}'s site ({portfolio_url}).
@@ -94,12 +97,14 @@ class BlogPipelineConfig:
     owner_name: str = "Yabibal"
     portfolio_url: str = "https://yabibal.site"
     default_og_image_url: str | None = None
-    blog_image_model: str = "gemini-2.0-flash-preview-image-generation"
+    # Native image models: request IMAGE modality or the API often returns text-only (no cover bytes).
+    blog_image_model: str = "gemini-2.5-flash-image"
     cloudinary_cloud_name: str | None = None
     cloudinary_api_key: str | None = None
     cloudinary_api_secret: str | None = None
     cloudinary_folder: str = "aegis/blog"
     blog_generate_images: bool = True
+    pipeline_run_key: str | None = None
 
     @classmethod
     def from_full_settings(cls, settings: Any) -> BlogPipelineConfig:
@@ -111,12 +116,13 @@ class BlogPipelineConfig:
             owner_name=settings.owner_name,
             portfolio_url=settings.portfolio_url,
             default_og_image_url=os.getenv("BLOG_DEFAULT_OG_IMAGE") or None,
-            blog_image_model=os.getenv("BLOG_IMAGE_MODEL", "gemini-2.0-flash-preview-image-generation").strip(),
+            blog_image_model=os.getenv("BLOG_IMAGE_MODEL", "gemini-2.5-flash-image").strip(),
             cloudinary_cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME") or None,
             cloudinary_api_key=os.getenv("CLOUDINARY_API_KEY") or None,
             cloudinary_api_secret=os.getenv("CLOUDINARY_API_SECRET") or None,
             cloudinary_folder=os.getenv("CLOUDINARY_FOLDER", "aegis/blog").strip() or "aegis/blog",
             blog_generate_images=os.getenv("BLOG_GENERATE_IMAGES", "true").strip().lower() not in ("0", "false", "no", "off"),
+            pipeline_run_key=(os.getenv("BLOG_PIPELINE_RUN_KEY") or "").strip() or None,
         )
 
     @classmethod
@@ -138,12 +144,13 @@ class BlogPipelineConfig:
             owner_name=os.environ.get("OWNER_NAME", "Yabibal").strip(),
             portfolio_url=os.environ.get("PORTFOLIO_URL", "https://yabibal.site").strip(),
             default_og_image_url=os.getenv("BLOG_DEFAULT_OG_IMAGE") or None,
-            blog_image_model=os.getenv("BLOG_IMAGE_MODEL", "gemini-2.0-flash-preview-image-generation").strip(),
+            blog_image_model=os.getenv("BLOG_IMAGE_MODEL", "gemini-2.5-flash-image").strip(),
             cloudinary_cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME") or None,
             cloudinary_api_key=os.getenv("CLOUDINARY_API_KEY") or None,
             cloudinary_api_secret=os.getenv("CLOUDINARY_API_SECRET") or None,
             cloudinary_folder=os.getenv("CLOUDINARY_FOLDER", "aegis/blog").strip() or "aegis/blog",
             blog_generate_images=os.getenv("BLOG_GENERATE_IMAGES", "true").strip().lower() not in ("0", "false", "no", "off"),
+            pipeline_run_key=(os.getenv("BLOG_PIPELINE_RUN_KEY") or "").strip() or None,
         )
 
 
@@ -248,6 +255,162 @@ def _blog_generation_config() -> Any:
         return genai.types.GenerationConfig(max_output_tokens=max_tokens)
 
 
+def _stage_retry_settings() -> tuple[int, int]:
+    attempts = int(os.environ.get("BLOG_STAGE_RETRY_ATTEMPTS", "3"))
+    base_sleep = int(os.environ.get("BLOG_STAGE_RETRY_BASE_SECONDS", "2"))
+    attempts = max(1, min(attempts, 6))
+    base_sleep = max(1, min(base_sleep, 20))
+    return attempts, base_sleep
+
+
+def _quality_gate_settings() -> tuple[bool, int, int, float, bool, list[str]]:
+    enabled = os.environ.get("BLOG_QUALITY_GATE_ENABLED", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    min_words = int(os.environ.get("BLOG_QUALITY_MIN_WORDS", "450"))
+    min_headings = int(os.environ.get("BLOG_QUALITY_MIN_HEADINGS", "3"))
+    dup_threshold = float(os.environ.get("BLOG_DUPLICATE_SIM_THRESHOLD", "0.72"))
+    block_on_fail = os.environ.get("BLOG_QUALITY_BLOCK_ON_FAIL", "false").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    banned_raw = os.environ.get(
+        "BLOG_BANNED_PHRASES",
+        "as an ai language model,here is the article,in conclusion,overall,to summarize",
+    )
+    banned = [x.strip().lower() for x in banned_raw.split(",") if x.strip()]
+    min_words = max(200, min(min_words, 2500))
+    min_headings = max(2, min(min_headings, 10))
+    dup_threshold = max(0.4, min(dup_threshold, 0.95))
+    return enabled, min_words, min_headings, dup_threshold, block_on_fail, banned
+
+
+def _tokenize_for_similarity(text: str) -> set[str]:
+    words = re.findall(r"[a-z0-9]{3,}", text.lower())
+    return set(words)
+
+
+def _jaccard_similarity(a: set[str], b: set[str]) -> float:
+    if not a or not b:
+        return 0.0
+    inter = len(a.intersection(b))
+    union = len(a.union(b))
+    if union == 0:
+        return 0.0
+    return inter / union
+
+
+def _max_similarity_against_recent_posts(client: Client, candidate_body: str) -> float:
+    candidate_tokens = _tokenize_for_similarity(candidate_body)
+    if not candidate_tokens:
+        return 0.0
+    rows_res = (
+        client.table("blog_posts")
+        .select("body_md")
+        .order("created_at", desc=True)
+        .limit(30)
+        .execute()
+    )
+    max_sim = 0.0
+    for row in rows_res.data or []:
+        body = str(row.get("body_md") or "")
+        sim = _jaccard_similarity(candidate_tokens, _tokenize_for_similarity(body))
+        if sim > max_sim:
+            max_sim = sim
+    return max_sim
+
+
+def _evaluate_quality_gate(client: Client, *, title: str, body_md: str) -> tuple[bool, str, float]:
+    enabled, min_words, min_headings, dup_threshold, _, banned_phrases = _quality_gate_settings()
+    if not enabled:
+        return True, "disabled", 0.0
+
+    words = re.findall(r"\b\w+\b", body_md)
+    word_count = len(words)
+    if word_count < min_words:
+        return False, f"too_short:{word_count}<{min_words}", 0.0
+
+    heading_count = sum(
+        1 for line in body_md.splitlines() if line.strip().startswith("##")
+    )
+    if heading_count < min_headings:
+        return False, f"insufficient_headings:{heading_count}<{min_headings}", 0.0
+
+    lowered = body_md.lower()
+    for phrase in banned_phrases:
+        if phrase and phrase in lowered:
+            return False, f"banned_phrase:{phrase}", 0.0
+
+    dup_score = _max_similarity_against_recent_posts(client, body_md)
+    if dup_score >= dup_threshold:
+        return False, f"duplicate_similarity:{dup_score:.3f}>={dup_threshold}", dup_score
+
+    if len(title.strip()) < 10:
+        return False, "title_too_short", dup_score
+    return True, "ok", dup_score
+
+
+def _record_pipeline_failure(
+    client: Client,
+    *,
+    stage: str,
+    error: BaseException,
+    payload: dict[str, Any],
+    run_key: str | None,
+    topic_key: str | None,
+    slug: str | None,
+    idea_id: str | None,
+) -> None:
+    row = {
+        "stage": stage,
+        "error_message": str(error)[:4000],
+        "payload": payload,
+        "pipeline_run_key": run_key,
+        "topic_key": topic_key,
+        "slug": slug,
+        "blog_idea_id": idea_id,
+    }
+    try:
+        client.table("blog_pipeline_failures").insert(row).execute()
+    except Exception as log_exc:
+        logger.warning("failed to write dead-letter row stage=%s err=%s", stage, log_exc)
+
+
+def _run_stage_with_retry(
+    stage: str,
+    fn: Callable[[], Any],
+    *,
+    attempts: int,
+    base_sleep: int,
+) -> Any:
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= attempts:
+                break
+            sleep_s = base_sleep * attempt
+            logger.warning(
+                "stage=%s failed attempt=%s/%s err=%s; retrying in %ss",
+                stage,
+                attempt,
+                attempts,
+                exc,
+                sleep_s,
+            )
+            time.sleep(sleep_s)
+    if last_exc is None:
+        raise RuntimeError(f"stage {stage} failed without exception")
+    raise last_exc
+
+
 def normalize_topic_key(raw: str) -> str:
     topic_key = str(raw).strip().lower().replace(" ", "_")
     topic_key = re.sub(r"[^a-z0-9_]+", "", topic_key)
@@ -281,6 +444,19 @@ def _slug_taken(client: Client, slug: str) -> bool:
         client.table("blog_posts")
         .select("id")
         .eq("slug", slug)
+        .limit(1)
+        .execute()
+    )
+    return bool(r.data)
+
+
+def _run_key_exists(client: Client, run_key: str | None) -> bool:
+    if not run_key:
+        return False
+    r = (
+        client.table("blog_posts")
+        .select("id")
+        .eq("pipeline_run_key", run_key)
         .limit(1)
         .execute()
     )
@@ -387,11 +563,41 @@ def _build_cover_prompt(
     return image_prompt[:1200], image_alt[:280]
 
 
+def _cover_image_generation_config() -> dict[str, Any]:
+    """Gemini image endpoints expect image output modality (see Google image-generation docs)."""
+    return {
+        "response_modalities": [genai_protos.GenerationConfig.Modality.IMAGE],
+    }
+
+
 def _generate_cover_image_bytes(cfg: BlogPipelineConfig, image_prompt: str) -> tuple[bytes, str] | None:
     try:
         image_model = genai.GenerativeModel(cfg.blog_image_model)
-        resp = image_model.generate_content(image_prompt)
-        return _extract_image_bytes_from_gemini_response(resp)
+        resp = image_model.generate_content(
+            image_prompt,
+            generation_config=_cover_image_generation_config(),
+        )
+        out = _extract_image_bytes_from_gemini_response(resp)
+        if out is None:
+            fr = None
+            br = None
+            try:
+                cands = getattr(resp, "candidates", None) or []
+                if cands:
+                    fr = getattr(cands[0], "finish_reason", None)
+                pf = getattr(resp, "prompt_feedback", None)
+                if pf is not None:
+                    br = getattr(pf, "block_reason", None)
+            except Exception:
+                pass
+            logger.warning(
+                "cover image: model=%s returned no inline image (finish_reason=%s prompt_block=%s). "
+                "Check BLOG_IMAGE_MODEL (use a native image model) and API quotas.",
+                cfg.blog_image_model,
+                fr,
+                br,
+            )
+        return out
     except Exception as e:
         logger.warning("cover image generation failed for model=%s: %s", cfg.blog_image_model, e)
         return None
@@ -418,23 +624,22 @@ def _upload_cover_to_cloudinary(
         return None
 
     ts = str(int(time.time()))
+    # Every signed field except api_key, file, signature must be included in the string to sign
+    # (sending overwrite/tags without signing caused invalid-signature uploads → no secure_url).
     sign_params = {
         "folder": cfg.cloudinary_folder,
         "public_id": f"{slug}-cover",
         "timestamp": ts,
+        "overwrite": "true",
+        "tags": "aegis,blog,cover",
     }
     signature = _cloudinary_signature(sign_params, secret)
 
     url = f"https://api.cloudinary.com/v1_1/{cloud}/image/upload"
     form = {
         "api_key": key,
-        "timestamp": ts,
         "signature": signature,
-        "folder": cfg.cloudinary_folder,
-        "public_id": f"{slug}-cover",
-        "overwrite": "true",
-        "context": f"caption={image_prompt[:180]}",
-        "tags": "aegis,blog,cover",
+        **sign_params,
     }
     ext = "png"
     if "/" in mime_type:
@@ -448,6 +653,15 @@ def _upload_cover_to_cloudinary(
         payload = resp.json() if resp.content else {}
         secure_url = str(payload.get("secure_url") or "").strip()
         return secure_url or None
+    except requests.HTTPError as e:
+        detail = ""
+        if e.response is not None:
+            try:
+                detail = (e.response.text or "")[:400]
+            except Exception:
+                pass
+        logger.warning("cloudinary upload failed for slug=%s: %s %s", slug, e, detail)
+        return None
     except Exception as e:
         logger.warning("cloudinary upload failed for slug=%s: %s", slug, e)
         return None
@@ -528,6 +742,15 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
     genai.configure(api_key=cfg.gemini_api_key)
     model = genai.GenerativeModel(cfg.gemini_model)
     client = _get_sb_client(cfg)
+    retry_attempts, retry_base_sleep = _stage_retry_settings()
+
+    if _run_key_exists(client, cfg.pipeline_run_key):
+        logger.info("blog draft skipped: pipeline_run_key already exists (%s)", cfg.pipeline_run_key)
+        return {
+            "status": "skipped_duplicate",
+            "reason": "pipeline_run_key",
+            "pipeline_run_key": cfg.pipeline_run_key,
+        }
 
     gen_cfg = _blog_generation_config()
     idea_id: str | None = None
@@ -587,16 +810,38 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
         return {"status": "skipped_duplicate", "reason": "topic_key", "topic_key": topic_key}
 
     tags_hint = ", ".join(tags_idea) if tags_idea else "general"
-    meta_text = model.generate_content(
-        WRITE_META_PROMPT.format(
-            owner_name=cfg.owner_name,
-            portfolio_url=cfg.portfolio_url,
-            title=title,
-            angle=angle or title,
-            tags=tags_hint,
-        ),
-        generation_config=gen_cfg,
-    ).text
+    try:
+        meta_text = _run_stage_with_retry(
+            "meta_generation",
+            lambda: model.generate_content(
+                WRITE_META_PROMPT.format(
+                    owner_name=cfg.owner_name,
+                    portfolio_url=cfg.portfolio_url,
+                    title=title,
+                    angle=angle or title,
+                    tags=tags_hint,
+                ),
+                generation_config=gen_cfg,
+            ).text,
+            attempts=retry_attempts,
+            base_sleep=retry_base_sleep,
+        )
+    except Exception as e:
+        _record_pipeline_failure(
+            client,
+            stage="meta_generation",
+            error=e,
+            payload={"title": title, "angle": angle, "tags_hint": tags_hint},
+            run_key=cfg.pipeline_run_key,
+            topic_key=topic_key,
+            slug=None,
+            idea_id=idea_id,
+        )
+        if idea_id:
+            client.table("blog_ideas").update(
+                {"status": "failed", "skip_reason": "meta_generation_failed"}
+            ).eq("id", idea_id).execute()
+        raise
     meta = _extract_json_object(meta_text or "")
 
     final_title = str(meta.get("title", title)).strip() or title
@@ -613,22 +858,50 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
     tags = [str(t).strip().lower() for t in tags if str(t).strip()][:16]
     resource_links = _resource_links_from_tags(tags, source_url=source_url)
 
-    body_text = model.generate_content(
-        WRITE_BODY_PROMPT.format(
-            owner_name=cfg.owner_name,
-            portfolio_url=cfg.portfolio_url,
-            title=final_title,
-            angle=angle or title,
-            tags=tags_hint,
-        ),
-        generation_config=gen_cfg,
-    ).text
+    try:
+        body_text = _run_stage_with_retry(
+            "body_generation",
+            lambda: model.generate_content(
+                WRITE_BODY_PROMPT.format(
+                    owner_name=cfg.owner_name,
+                    portfolio_url=cfg.portfolio_url,
+                    title=final_title,
+                    angle=angle or title,
+                    tags=tags_hint,
+                ),
+                generation_config=gen_cfg,
+            ).text,
+            attempts=retry_attempts,
+            base_sleep=retry_base_sleep,
+        )
+    except Exception as e:
+        _record_pipeline_failure(
+            client,
+            stage="body_generation",
+            error=e,
+            payload={"title": final_title, "tags": tags},
+            run_key=cfg.pipeline_run_key,
+            topic_key=topic_key,
+            slug=None,
+            idea_id=idea_id,
+        )
+        if idea_id:
+            client.table("blog_ideas").update(
+                {"status": "failed", "skip_reason": "body_generation_failed"}
+            ).eq("id", idea_id).execute()
+        raise
     body_md = _strip_outer_markdown_fence(body_text or "").strip()
     if not body_md:
         raise ValueError("Empty body from write-body model")
 
     raw_slug = _slugify_kebab(str(meta.get("slug") or final_title))
     slug = _unique_slug(client, raw_slug)
+
+    quality_ok, quality_reason, dup_score = _evaluate_quality_gate(
+        client,
+        title=final_title,
+        body_md=body_md,
+    )
 
     image_prompt: str | None = None
     generated_image_url: str | None = None
@@ -655,9 +928,53 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
                 )
         except Exception as e:
             logger.warning("cover generation pipeline skipped for slug=%s: %s", slug, e)
+            _record_pipeline_failure(
+                client,
+                stage="cover_generation",
+                error=e,
+                payload={"slug": slug, "title": final_title},
+                run_key=cfg.pipeline_run_key,
+                topic_key=topic_key,
+                slug=slug,
+                idea_id=idea_id,
+            )
 
     post_status, published_at = _post_status_after_write()
+    _, _, _, _, block_on_quality_fail, _ = _quality_gate_settings()
+    if not quality_ok:
+        logger.warning(
+            "quality gate failed slug=%s reason=%s dup_score=%.3f",
+            slug,
+            quality_reason,
+            dup_score,
+        )
+        _record_pipeline_failure(
+            client,
+            stage="quality_gate",
+            error=ValueError(quality_reason),
+            payload={"slug": slug, "title": final_title, "dup_score": dup_score},
+            run_key=cfg.pipeline_run_key,
+            topic_key=topic_key,
+            slug=slug,
+            idea_id=idea_id,
+        )
+        if block_on_quality_fail:
+            if idea_id:
+                client.table("blog_ideas").update(
+                    {"status": "failed", "skip_reason": f"quality_gate:{quality_reason}"}
+                ).eq("id", idea_id).execute()
+            raise ValueError(f"Quality gate failed: {quality_reason}")
+        # Soft enforcement: do not auto-publish low-quality content.
+        post_status = "review"
+        published_at = None
+
     final_image_url = generated_image_url or cfg.default_og_image_url
+    if generated_image_url is None and cfg.blog_generate_images and final_image_url:
+        logger.warning(
+            "blog cover: slug=%s using fallback image URL (no generated+uploaded cover; "
+            "see prior warnings for Gemini vs Cloudinary)",
+            slug,
+        )
     row: dict[str, Any] = {
         "slug": slug,
         "title": final_title,
@@ -672,22 +989,53 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
         "og_image_url": final_image_url,
         "image_alt": image_alt,
         "image_prompt": image_prompt,
+        "pipeline_run_key": cfg.pipeline_run_key,
     }
 
     try:
-        ins = client.table("blog_posts").insert(row).execute()
+        ins = _run_stage_with_retry(
+            "insert_post",
+            lambda: client.table("blog_posts").insert(row).execute(),
+            attempts=retry_attempts,
+            base_sleep=retry_base_sleep,
+        )
     except Exception as exc:
         message = str(exc)
-        if "resource_links" not in message and "image_prompt" not in message:
+        if (
+            "resource_links" not in message
+            and "image_prompt" not in message
+            and "pipeline_run_key" not in message
+        ):
+            _record_pipeline_failure(
+                client,
+                stage="insert_post",
+                error=exc,
+                payload={"slug": slug, "topic_key": topic_key, "status": post_status},
+                run_key=cfg.pipeline_run_key,
+                topic_key=topic_key,
+                slug=slug,
+                idea_id=idea_id,
+            )
+            if idea_id:
+                client.table("blog_ideas").update(
+                    {"status": "failed", "skip_reason": "insert_post_failed"}
+                ).eq("id", idea_id).execute()
             raise
         fallback_row = dict(row)
         fallback_row.pop("resource_links", None)
         fallback_row.pop("image_prompt", None)
-        ins = client.table("blog_posts").insert(fallback_row).execute()
+        fallback_row.pop("pipeline_run_key", None)
+        ins = _run_stage_with_retry(
+            "insert_post_fallback",
+            lambda: client.table("blog_posts").insert(fallback_row).execute(),
+            attempts=retry_attempts,
+            base_sleep=retry_base_sleep,
+        )
     if not ins.data:
         raise RuntimeError("Supabase insert returned no data")
 
     new_id = ins.data[0].get("id")
+    inserted_row = ins.data[0] if isinstance(ins.data[0], dict) else {}
     if idea_id and new_id:
         client.table("blog_ideas").update(
             {
@@ -702,12 +1050,31 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
         topic_key,
         post_status,
     )
+    if post_status == "published":
+        webhook_payload = {
+            "id": str(new_id) if new_id else None,
+            "slug": inserted_row.get("slug") or slug,
+            "title": inserted_row.get("title") or final_title,
+            "topic_key": inserted_row.get("topic_key") or topic_key,
+            "published_at": inserted_row.get("published_at") or published_at,
+            "tags": inserted_row.get("tags") or tags,
+            "image_url": inserted_row.get("image_url") or final_image_url,
+            "og_image_url": inserted_row.get("og_image_url") or final_image_url,
+        }
+        notify_blog_post_published(
+            post=webhook_payload,
+            source="draft_pipeline",
+            pipeline_run_key=cfg.pipeline_run_key,
+        )
     return {
         "status": "inserted",
         "id": str(new_id) if new_id else None,
         "slug": slug,
         "topic_key": topic_key,
         "blog_idea_id": idea_id,
+        "pipeline_run_key": cfg.pipeline_run_key,
         "post_status": post_status,
         "published_at": published_at,
+        "quality_gate_passed": quality_ok,
+        "quality_gate_reason": quality_reason,
     }

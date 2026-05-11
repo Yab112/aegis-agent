@@ -1,8 +1,10 @@
 """
 HTTP middleware + logging.
 
-FastAPI is ASGI-only — use Hypercorn, Uvicorn, etc. Logging is server-independent:
-one stderr handler on `aegis` with flush after each line (Windows-safe).
+FastAPI is ASGI-only — use Hypercorn, Uvicorn, etc. One stderr handler on ``aegis``
+(flushed each emit). Request lines are logged **once** via that logger (plus an
+optional append to ``aegis-access.log``); do not also enable Hypercorn/Uvicorn
+``--access-logfile -`` or you will duplicate every request in the console.
 
 We use **pure ASGI** middleware (not BaseHTTPMiddleware) so every request is logged
 reliably with Hypercorn/Uvicorn; BaseHTTPMiddleware uses extra anyio plumbing that
@@ -32,12 +34,6 @@ def aegis_access_log_path() -> Path:
 
 _LOG_FORMAT = "%(asctime)s | %(levelname)-5s | %(name)s | %(message)s"
 _LOG_DATEFMT = "%H:%M:%S"
-
-
-def _aegis_stderr_line(message: str) -> None:
-    """Unbuffered stderr — survives Hypercorn workers + Windows where logging can lag."""
-    sys.stderr.write(message + "\n")
-    sys.stderr.flush()
 
 
 def write_aegis_access_line(message: str) -> None:
@@ -118,12 +114,9 @@ class AegisASGILogMiddleware:
         method = scope.get("method", "?")
         path = scope.get("path", "")
         start = time.perf_counter()
-        line_in = f"[aegis] [req] -> {method} {path}"
-        _aegis_stderr_line(line_in)
+        line_in = f"[req] -> {method} {path}"
         write_aegis_access_line(line_in)
-        sys.stdout.write(line_in + "\n")
-        sys.stdout.flush()
-        log.info("[req] -> %s %s", method, path)
+        log.info("%s", line_in)
 
         status: dict[str, int | None] = {"code": None}
 
@@ -138,9 +131,6 @@ class AegisASGILogMiddleware:
             log.exception("[req] x %s %s (unhandled)", method, path)
             raise
         ms = (time.perf_counter() - start) * 1000
-        line_out = f"[aegis] [req] <- {method} {path} {status['code']} {ms:.0f}ms"
-        _aegis_stderr_line(line_out)
+        line_out = f"[req] <- {method} {path} {status['code']} {ms:.0f}ms"
         write_aegis_access_line(line_out)
-        sys.stdout.write(line_out + "\n")
-        sys.stdout.flush()
-        log.info("[req] <- %s %s %s %.0fms", method, path, status["code"], ms)
+        log.info("%s", line_out)

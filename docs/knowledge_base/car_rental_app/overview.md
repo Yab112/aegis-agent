@@ -9,7 +9,7 @@ to track fleet, bookings, and revenue in real time.
 
 ## The problem it solves
 
-Most small car rental businesses in Ethiopia rely on WhatsApp and phone calls
+Most small car rental businesses in Ethiopia rely on phone and messaging channels
 to manage bookings. This leads to double-bookings, lost leads, and zero
 visibility into fleet utilization. This app replaces that chaos with
 a structured digital workflow.

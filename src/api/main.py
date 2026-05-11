@@ -15,7 +15,10 @@ from src.api.logging_config import (
 )
 from src.api.blog_internal import router as blog_internal_router
 from src.api.blog_routes import router as blog_public_router
+from src.api.health_routes import router as health_router
 from src.api.routes import router
+from src.api.rate_limit import AegisRateLimitMiddleware
+from src.api.telegram_webhook import router as telegram_router
 
 settings = get_settings()
 configure_logging(settings)
@@ -48,6 +51,7 @@ app = FastAPI(
 # Pure ASGI (not BaseHTTPMiddleware) so [req] lines show under Hypercorn/Uvicorn.
 # Order: next line runs inner → CORS is outer (add CORS after this).
 app.add_middleware(AegisASGILogMiddleware)
+app.add_middleware(AegisRateLimitMiddleware, settings=settings)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins_list,
@@ -59,6 +63,15 @@ app.add_middleware(
 app.include_router(router)
 app.include_router(blog_public_router)
 app.include_router(blog_internal_router)
+app.include_router(health_router)
+app.include_router(telegram_router)
+
+# Versioned aliases for forward-compatible clients.
+app.include_router(router, prefix="/v1")
+app.include_router(blog_public_router, prefix="/v1")
+app.include_router(blog_internal_router, prefix="/v1")
+app.include_router(health_router, prefix="/v1")
+app.include_router(telegram_router, prefix="/v1")
 
 _PUBLIC = Path(__file__).resolve().parents[2] / "public"
 _CHAT_HTML = _PUBLIC / "chat.html"
@@ -78,10 +91,12 @@ def root():
         "chat_ui": "/chat-ui",
         "chat_static": "/public/chat.html",
         "docs": "/docs",
-        "health": "/health",
+        "health": "GET /health, GET /health/livez, GET /health/readyz",
         "chat_api": "POST /chat",
-        "blog_api": "GET /blog, GET /blog/topics, GET /blog/{slug}",
+        "blog_api": "GET /blog, GET /blog/topics, GET /blog/search, GET /blog/{slug}",
         "blog_internal": "POST /internal/blog/generate-draft (auth required)",
+        "telegram_webhook": "POST /v1/telegram/webhook (Telegram setWebhook → owner reply → visitor email)",
+        "v1_aliases": "GET /v1/health, POST /v1/chat, GET /v1/blog, POST /v1/telegram/webhook",
     }
 
 
@@ -95,7 +110,3 @@ def chat_ui():
         )
     return FileResponse(_CHAT_HTML, media_type="text/html")
 
-
-@app.get("/health")
-def health():
-    return {"status": "ok", "agent": "aegis-agent", "version": "1.0.0"}

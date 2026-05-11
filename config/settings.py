@@ -49,10 +49,27 @@ class Settings(BaseSettings):
     google_calendar_id: str
     calendar_timezone: str = "Africa/Addis_Ababa"
 
-    # WhatsApp
-    whatsapp_phone_number_id: str
-    whatsapp_access_token: str
-    whatsapp_recipient_number: str
+    # Telegram (handoff alerts to owner — see docs/telegram_setup.md)
+    telegram_bot_token: str
+    telegram_chat_id: str
+    # Optional but recommended: pass the same value to setWebhook(secret_token=…).
+    # Telegram sends it as header X-Telegram-Bot-Api-Secret-Token on each update.
+    telegram_webhook_secret: str | None = None
+
+    @field_validator("telegram_webhook_secret", mode="before")
+    @classmethod
+    def strip_telegram_webhook_secret(cls, v: object) -> object:
+        if isinstance(v, str):
+            s = v.strip()
+            return s or None
+        return v
+
+    @field_validator("telegram_bot_token", "telegram_chat_id", mode="before")
+    @classmethod
+    def strip_telegram_secrets(cls, v: object) -> object:
+        if isinstance(v, str):
+            return v.strip()
+        return v
 
     # RAG
     rag_top_k: int = 5
@@ -62,10 +79,31 @@ class Settings(BaseSettings):
 
     # API
     api_secret_key: str
-    allowed_origins: str = "https://yabibal.site,http://localhost:3000"
+    allowed_origins: str = (
+        "https://yabibal.site,https://www.yabibal.site,http://localhost:3000"
+    )
     port: int = 8000
     # Terminal: INFO=pipeline + HTTP; DEBUG=also httpx/lower-level Google noise
     log_level: str = "INFO"
+
+    # Abuse protection and public API smoothing
+    rate_limit_enabled: bool = True
+    rate_limit_chat_per_minute: int = 15
+    rate_limit_blog_per_minute: int = 120
+    rate_limit_default_per_minute: int = 90
+    blog_api_cache_ttl_seconds: int = 45
+
+    # When blog_posts.image_url / og_image_url are null (old rows or failed cover upload), the
+    # public API fills from this URL so Next.js meta tags always have an absolute OG image.
+    blog_default_og_image: str | None = None
+
+    @field_validator("blog_default_og_image", mode="before")
+    @classmethod
+    def strip_blog_default_og(cls, v: object) -> object:
+        if isinstance(v, str):
+            s = v.strip()
+            return s or None
+        return v
 
     @field_validator("log_level", mode="before")
     @classmethod

@@ -79,29 +79,46 @@ class TestRouter:
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestHandoffTool:
+    @staticmethod
+    def _telegram_settings():
+        m = MagicMock()
+        m.telegram_bot_token = "123:FAKE_TOKEN"
+        m.telegram_chat_id = "999888777"
+        return m
+
+    @patch("src.tools.handoff_tool.get_settings")
     @patch("src.tools.handoff_tool.httpx.post")
-    def test_successful_send_returns_true(self, mock_post):
+    def test_successful_send_returns_true(self, mock_post, mock_get_settings):
+        mock_get_settings.return_value = self._telegram_settings()
         mock_post.return_value.status_code = 200
         mock_post.return_value.raise_for_status = MagicMock()
-        from src.tools.handoff_tool import send_whatsapp_briefing
-        result = send_whatsapp_briefing(
+        mock_post.return_value.json = MagicMock(
+            return_value={"ok": True, "result": {"message_id": 42}}
+        )
+        from src.tools.handoff_tool import send_telegram_briefing
+
+        result = send_telegram_briefing(
             query="What is your rate?",
             intent="handoff",
             session_id="test-123",
             user_email="client@example.com",
         )
-        assert result is True
+        assert result.ok is True
+        assert result.message_id == 42
 
+    @patch("src.tools.handoff_tool.get_settings")
     @patch("src.tools.handoff_tool.httpx.post", side_effect=Exception("Network error"))
-    def test_failed_send_returns_false_gracefully(self, mock_post):
-        """WhatsApp failure should NOT crash the agent."""
-        from src.tools.handoff_tool import send_whatsapp_briefing
-        result = send_whatsapp_briefing(
+    def test_failed_send_returns_false_gracefully(self, mock_post, mock_get_settings):
+        """Telegram failure should NOT crash the agent."""
+        mock_get_settings.return_value = self._telegram_settings()
+        from src.tools.handoff_tool import send_telegram_briefing
+
+        result = send_telegram_briefing(
             query="What is your rate?",
             intent="handoff",
             session_id="test-123",
         )
-        assert result is False
+        assert result.ok is False
 
 
 # ──────────────────────────────────────────────────────────────────────────────

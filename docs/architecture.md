@@ -86,7 +86,7 @@ The system handles its own failure modes without going down:
 1. **Low RAG confidence** → handoff to human instead of hallucinating
 2. **Empty retrieval** → handoff immediately
 3. **HF API down** → retry with exponential backoff (tenacity)
-4. **WhatsApp send fails** → logged silently, user still gets a response
+4. **Telegram send fails** → logged silently, user still gets a response
 5. **Gemini quota hit** → graceful error message returned to user
 6. **Infinite loop guard** → `iterations >= 5` forces respond node
 

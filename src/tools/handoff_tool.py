@@ -1,94 +1,139 @@
 """
-WhatsApp Cloud API handoff tool.
+Telegram Bot API handoff + owner reply relay.
 
-Sends a structured lead briefing to your personal WhatsApp when
-the agent detects a sensitive query (rates, contracts, hiring).
-
-Free tier: 1000 business-initiated messages/month — more than enough.
+1. Sends a structured lead briefing to your Telegram when the agent hands off.
+2. When you **reply in Telegram to that alert** (same thread), the API webhook emails
+   your reply text to the visitor (if we captured their email on the handoff).
 """
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from datetime import datetime, timezone
 
 import httpx
-from datetime import datetime
+
 from config.settings import get_settings
 
-settings = get_settings()
 logger = logging.getLogger("aegis.handoff")
 
-WHATSAPP_API_URL = (
-    f"https://graph.facebook.com/v20.0/"
-    f"{settings.whatsapp_phone_number_id}/messages"
-)
+TELEGRAM_MAX_MESSAGE_LEN = 4096
 
 
-def send_whatsapp_briefing(
+@dataclass(frozen=True)
+class TelegramBriefingResult:
+    ok: bool
+    message_id: int | None = None
+
+
+def _telegram_api_base(bot_token: str) -> str:
+    return f"https://api.telegram.org/bot{bot_token.strip()}"
+
+
+def send_telegram_briefing(
     query: str,
     intent: str,
     session_id: str,
     user_email: str | None = None,
-) -> bool:
+) -> TelegramBriefingResult:
     """
-    Send a formatted lead briefing to your WhatsApp number.
+    Send a formatted lead briefing to the configured Telegram chat.
 
-    Returns True if sent successfully, False otherwise.
-    The agent continues gracefully even if this fails.
+    Returns ``TelegramBriefingResult`` with Telegram ``message_id`` when ``ok``,
+    so the owner can **reply to that message** to email the visitor (webhook flow).
     """
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    settings = get_settings()
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     email_line = f"Email: {user_email}" if user_email else "Email: not provided"
 
     message_body = (
-        f"*Aegis-Agent Lead Alert*\n"
-        f"───────────────────\n"
-        f"*Time:* {timestamp}\n"
-        f"*Session:* {session_id[:8]}...\n"
-        f"*Intent:* {intent}\n"
-        f"*{email_line}*\n\n"
-        f"*Question:*\n_{query}_\n\n"
-        f"Suggested response time: within 24 hours"
+        "Aegis-Agent Lead Alert\n"
+        "───────────────────\n"
+        f"Time: {timestamp}\n"
+        f"Session: {session_id[:8]}…\n"
+        f"Intent: {intent}\n"
+        f"{email_line}\n\n"
+        "Question:\n"
+        f"{query}\n\n"
+        "— Reply to this message (thread) to email your answer to the visitor "
+        "(when email was provided).\n"
+        "Suggested response time: within 24 hours"
     )
+    if len(message_body) > TELEGRAM_MAX_MESSAGE_LEN:
+        message_body = message_body[: TELEGRAM_MAX_MESSAGE_LEN - 20] + "\n…(truncated)"
 
-    # This number is **you (the business owner)** — Meta delivers an alert to this inbox,
-    # not to the site visitor. Visitors do not receive WhatsApp from this flow.
-    to_raw = settings.whatsapp_recipient_number.strip().replace(" ", "")
-    if to_raw.startswith("+"):
-        to_raw = to_raw[1:]
+    chat_id = settings.telegram_chat_id.strip()
+    token = settings.telegram_bot_token.strip()
 
     payload = {
-        "messaging_product": "whatsapp",
-        "to": to_raw,
-        "type": "text",
-        "text": {"body": message_body},
-    }
-
-    headers = {
-        "Authorization": f"Bearer {settings.whatsapp_access_token}",
-        "Content-Type": "application/json",
+        "chat_id": chat_id,
+        "text": message_body,
+        "disable_web_page_preview": True,
     }
 
     logger.info(
-        "handoff: POST graph.facebook.com WhatsApp messages (session intent=%s)",
+        "handoff: POST api.telegram.org sendMessage (session intent=%s)",
         intent,
     )
     try:
         response = httpx.post(
-            WHATSAPP_API_URL,
+            f"{_telegram_api_base(token)}/sendMessage",
             json=payload,
-            headers=headers,
             timeout=10,
         )
         response.raise_for_status()
-        tail = to_raw[-4:] if len(to_raw) >= 4 else "****"
-        logger.info(
-            "handoff: WhatsApp API ok status=%s (alert sent to owner number …%s, not the visitor)",
-            response.status_code,
-            tail,
-        )
-        return True
+        data = response.json() if response.content else {}
+        if not data.get("ok"):
+            logger.error(
+                "handoff: Telegram API returned ok=false: %s",
+                data.get("description") or data,
+            )
+            return TelegramBriefingResult(ok=False)
+        mid = (data.get("result") or {}).get("message_id")
+        if isinstance(mid, int):
+            logger.info(
+                "handoff: Telegram ok message_id=%s (reply in-thread to email visitor)",
+                mid,
+            )
+            return TelegramBriefingResult(ok=True, message_id=mid)
+        logger.warning("handoff: Telegram ok but no message_id in result")
+        return TelegramBriefingResult(ok=True, message_id=None)
     except Exception as e:
         logger.exception(
-            "handoff: WhatsApp API failed (chat continues): %s",
+            "handoff: Telegram failed (chat continues): %s",
             e,
         )
+        return TelegramBriefingResult(ok=False)
+
+
+def send_telegram_thread_reply(
+    *,
+    chat_id: str,
+    reply_to_message_id: int,
+    text: str,
+) -> bool:
+    """Send a short message in the same chat, threaded under ``reply_to_message_id``."""
+    settings = get_settings()
+    token = settings.telegram_bot_token.strip()
+    body = (text or "").strip()
+    if len(body) > TELEGRAM_MAX_MESSAGE_LEN:
+        body = body[: TELEGRAM_MAX_MESSAGE_LEN - 10] + "…"
+    if not body:
+        return False
+    try:
+        r = httpx.post(
+            f"{_telegram_api_base(token)}/sendMessage",
+            json={
+                "chat_id": chat_id.strip(),
+                "text": body,
+                "reply_to_message_id": reply_to_message_id,
+                "disable_web_page_preview": True,
+            },
+            timeout=10,
+        )
+        r.raise_for_status()
+        data = r.json() if r.content else {}
+        return bool(data.get("ok"))
+    except Exception as e:
+        logger.warning("handoff: thread reply failed: %s", e)
         return False

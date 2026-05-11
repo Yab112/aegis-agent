@@ -21,8 +21,8 @@ from src.tools.calendar_tool import (
     diversify_slots,
     filter_slots_by_weekday,
 )
-from src.tools.handoff_tool import send_whatsapp_briefing
-from src.tools.lead_tool import log_lead
+from src.tools.handoff_tool import send_telegram_briefing
+from src.tools.lead_tool import log_lead, register_handoff_telegram_alert
 
 logger = logging.getLogger("aegis.nodes")
 settings = get_settings()
@@ -110,7 +110,7 @@ def rag_node(state: AgentState) -> dict:
         "confidence_score": confidence,
         "tool_calls": tool_calls,
         "tool_outputs": tool_outputs,
-        # Never set should_handoff here — low retrieval must not trigger WhatsApp; router alone decides handoff.
+        # Never set should_handoff here — low retrieval must not trigger handoff; router alone decides handoff.
         "should_handoff": False,
     }
 
@@ -186,7 +186,7 @@ def calendar_node(state: AgentState) -> dict:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def handoff_node(state: AgentState) -> dict:
-    logger.info("node handoff: WhatsApp Cloud API + optional Supabase lead")
+    logger.info("node handoff: Telegram Bot API + optional Supabase lead")
     # Try to extract email from conversation
     user_email = _extract_email(state)
 
@@ -198,18 +198,28 @@ def handoff_node(state: AgentState) -> dict:
             query=state["user_query"],
         )
 
-    whatsapp_sent = send_whatsapp_briefing(
+    brief = send_telegram_briefing(
         query=state["user_query"],
         intent=state.get("intent", "sensitive"),
         session_id=state["session_id"],
         user_email=user_email,
     )
+    telegram_sent = brief.ok
+    if brief.ok and brief.message_id is not None:
+        register_handoff_telegram_alert(
+            telegram_chat_id=settings.telegram_chat_id,
+            telegram_message_id=brief.message_id,
+            session_id=state["session_id"],
+            visitor_email=user_email,
+            user_query=state["user_query"],
+        )
 
     tool_calls = state.get("tool_calls", []) + ["handoff"]
     tool_outputs = state.get("tool_outputs", []) + [
         {
             "tool": "handoff",
-            "whatsapp_sent": whatsapp_sent,
+            "telegram_sent": telegram_sent,
+            "telegram_message_id": brief.message_id,
             "lead_logged": bool(user_email),
             "user_email": user_email,
         }
@@ -245,7 +255,7 @@ def respond_node(state: AgentState) -> dict:
         ho = [t for t in state.get("tool_outputs", []) if t.get("tool") == "handoff"]
         tool_out = ho[-1] if ho else {}
         email = tool_out.get("user_email")
-        wa_ok = tool_out.get("whatsapp_sent")
+        tg_ok = tool_out.get("telegram_sent")
 
         logger.info("node respond: template (handoff), no Gemini")
         if email:
@@ -253,15 +263,16 @@ def respond_node(state: AgentState) -> dict:
                 f"I'm {settings.assistant_name} — salary and full-time terms are for "
                 f"{settings.owner_name} to answer.\n\n"
                 f"I still have **{email}** from earlier in this chat — he'll follow up there.\n\n"
-                f"I pinged him on WhatsApp with this question (that alert goes to **his** phone, not yours — "
-                f"so you won't see a new WhatsApp on your side)."
-                f"{' Meta accepted the send.' if wa_ok else ' WhatsApp send failed on our side; he may still see the lead in the dashboard.'}"
+                f"I pinged him on Telegram with this question (that alert goes to **his** account, not yours — "
+                f"so you won't see a new Telegram from the bot on your side). "
+                f"When he **replies in that Telegram thread**, his reply is emailed to **{email}**."
+                f"{' The bot accepted the alert.' if tg_ok else ' Telegram delivery failed on our side; he may still see the lead in the dashboard.'}"
             )
         else:
             response_text = (
                 f"I'm {settings.assistant_name} — this one needs {settings.owner_name} directly "
                 f"(rates, scope, contracts). "
-                f"{'I sent him a WhatsApp alert.' if wa_ok else 'WhatsApp delivery failed — use the site or leave your email.'} "
+                f"{'I sent him a Telegram alert.' if tg_ok else 'Telegram delivery failed — use the site or leave your email.'} "
                 f"Drop your email in your next message if you haven’t shared one yet."
             )
         return {

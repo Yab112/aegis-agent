@@ -27,6 +27,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("blog_publish_reviewed")
 
+from src.blog.publish_webhook import notify_blog_post_published
+
 
 def _parse_ts(value: str | None) -> datetime | None:
     if not value:
@@ -53,7 +55,7 @@ def main() -> None:
     client = create_client(url, svc)
     now = datetime.now(timezone.utc)
 
-    cols = "id,published_at,scheduled_publish_at"
+    cols = "id,slug,title,topic_key,tags,image_url,og_image_url,published_at,scheduled_publish_at"
     try:
         res = (
             client.table("blog_posts")
@@ -65,16 +67,22 @@ def main() -> None:
         logger.warning("select with scheduled_publish_at failed (%s); retry without column", e)
         res = (
             client.table("blog_posts")
-            .select("id,published_at")
+            .select("id,slug,title,topic_key,tags,image_url,og_image_url,published_at")
             .eq("status", "review")
             .execute()
         )
         for row in res.data or []:
             if row.get("published_at"):
                 continue
-            client.table("blog_posts").update(
+            update_res = client.table("blog_posts").update(
                 {"status": "published", "published_at": now.isoformat()}
-            ).eq("id", row["id"]).execute()
+            ).eq("id", row["id"]).select("id,slug,title,topic_key,tags,image_url,og_image_url,published_at").execute()
+            publish_row = (update_res.data or [{}])[0]
+            notify_blog_post_published(
+                post=publish_row,
+                source="review_publish_job",
+                pipeline_run_key=None,
+            )
             logger.info("published id=%s (no schedule column)", row["id"])
         print(
             json.dumps(
@@ -106,9 +114,15 @@ def main() -> None:
                 skipped += 1
                 logger.info("skip id=%s — scheduled_publish_at in future", row["id"])
                 continue
-        client.table("blog_posts").update(
+        update_res = client.table("blog_posts").update(
             {"status": "published", "published_at": now.isoformat()}
-        ).eq("id", row["id"]).execute()
+        ).eq("id", row["id"]).select("id,slug,title,topic_key,tags,image_url,og_image_url,published_at").execute()
+        publish_row = (update_res.data or [{}])[0]
+        notify_blog_post_published(
+            post=publish_row,
+            source="review_publish_job",
+            pipeline_run_key=None,
+        )
         published += 1
         logger.info("published id=%s", row["id"])
 
