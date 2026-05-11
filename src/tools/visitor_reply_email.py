@@ -53,6 +53,7 @@ Rules:
 - Plain sentences only. No subject line. No "Dear Sir/Madam". You may start with "Hi," or similar if natural.
 - No HTML tags. No markdown. No bullet lists unless essential.
 - Keep numbers, dates, links, and names exactly as given.
+- Do not add a closing sign-off with the owner name (no "Best, …" / "Regards, …"); the email footer already includes their name.
 - If the draft is already fine, lightly tighten wording only.
 """
 
@@ -95,15 +96,32 @@ def polish_owner_reply_for_visitor_email(
 
 
 def _paragraphs_to_html(plain: str) -> str:
+    """Turn plain body into paragraphs; double newline = extra vertical space."""
     blocks = [p.strip() for p in re.split(r"\n\s*\n+", (plain or "").strip()) if p.strip()]
     if not blocks:
         blocks = [(plain or "").strip() or " "]
-    parts = []
-    for b in blocks:
+    font = (
+        "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',"
+        "Arial,sans-serif"
+    )
+    parts: list[str] = []
+    for bi, b in enumerate(blocks):
+        inner: list[str] = []
         for line in b.split("\n"):
             line = line.strip()
             if line:
-                parts.append(f"<p style=\"margin:0 0 12px 0;line-height:1.55;\">{html.escape(line)}</p>")
+                inner.append(
+                    f'<p style="margin:0 0 14px 0;font-family:{font};font-size:16px;'
+                    f"line-height:1.65;color:#1e293b;\">{html.escape(line)}</p>"
+                )
+        if inner:
+            mb = "22px" if bi < len(blocks) - 1 else "0"
+            parts.append(
+                f'<table role="presentation" width="100%" cellspacing="0" cellpadding="0" '
+                f'style="margin:0 0 {mb} 0;"><tr><td style="padding:0 0 0 16px;border-left:3px solid #7c3aed;">'
+                + "".join(inner)
+                + "</td></tr></table>"
+            )
     return "\n".join(parts) if parts else "<p></p>"
 
 
@@ -113,52 +131,99 @@ def build_branded_visitor_email_html(
     polished_plain_body: str,
     session_short: str,
 ) -> str:
-    """Single-column HTML email with optional logo header and owner footer."""
+    """Table-based HTML email: purple accent, logo, readable body, CTA-style footer."""
     logo = (getattr(settings, "email_brand_logo_url", None) or "").strip()
-    logo_block = ""
+    name = html.escape(settings.owner_name)
+    role = html.escape(settings.owner_role)
+    site = html.escape(settings.portfolio_url, quote=True)
+    assistant = html.escape(settings.assistant_name, quote=True)
+    sess = html.escape(session_short, quote=True)
+
+    font = (
+        "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',"
+        "Arial,sans-serif"
+    )
+
     if logo:
-        logo_block = (
-            f'<img src="{html.escape(logo, quote=True)}" alt="{html.escape(settings.owner_name, quote=True)}" '
-            'style="max-height:52px;display:block;margin:0 auto 8px auto;" />'
-        )
+        logo_esc = html.escape(logo, quote=True)
+        logo_block = f"""<img src="{logo_esc}" alt="{name}" width="140" height="auto" style="display:block;margin:0 auto 14px auto;max-width:180px;height:auto;border:0;" />"""
     else:
-        logo_block = (
-            f'<p style="margin:0;font-size:20px;font-weight:600;color:#111;">'
-            f"{html.escape(settings.owner_name)}</p>"
-        )
+        logo_block = f"""<p style="margin:0 0 6px 0;font-family:{font};font-size:22px;font-weight:700;color:#4c1d95;letter-spacing:-0.02em;">{name}</p>"""
 
     body_html = _paragraphs_to_html(polished_plain_body)
 
-    footer = (
-        f"<p style=\"margin:16px 0 0 0;font-size:13px;color:#555;line-height:1.5;\">"
-        f"<strong>{html.escape(settings.owner_name)}</strong><br />"
-        f"{html.escape(settings.owner_role)}<br />"
-        f'<a href="{html.escape(settings.portfolio_url, quote=True)}" style="color:#2563eb;">'
-        f"{html.escape(settings.portfolio_url)}</a><br />"
-        f"<span style=\"color:#888;\">Ref: session {html.escape(session_short, quote=True)} · "
-        f"{html.escape(settings.assistant_name, quote=True)}</span></p>"
-    )
+    # Bulletproof button + footer (Gmail-friendly).
+    footer = f"""
+<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:8px 0 0 0;">
+  <tr>
+    <td style="border-radius:8px;background-color:#5b21b6;background-image:linear-gradient(135deg,#6d28d9 0%,#4c1d95 100%);" bgcolor="#5b21b6">
+      <a href="{site}" target="_blank" rel="noopener noreferrer" style="display:inline-block;padding:14px 28px;font-family:{font};font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;">View portfolio</a>
+    </td>
+  </tr>
+</table>
+<p style="margin:22px 0 0 0;font-family:{font};font-size:15px;line-height:1.5;color:#334155;">
+  <strong style="color:#4c1d95;">{name}</strong><br />
+  <span style="color:#64748b;font-size:14px;">{role}</span>
+</p>
+<p style="margin:14px 0 0 0;font-family:{font};font-size:12px;line-height:1.5;color:#94a3b8;">
+  Ref · session {sess} · {assistant}<br />
+  You received this because you reached out via the site.
+</p>
+"""
 
     return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width" /></head>
-<body style="margin:0;padding:0;background:#f4f6f8;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f6f8;padding:24px 12px;">
-    <tr><td align="center">
-      <table role="presentation" width="100%" style="max-width:600px;background:#ffffff;border-radius:12px;
-        box-shadow:0 1px 3px rgba(0,0,0,.08);overflow:hidden;" cellspacing="0" cellpadding="0">
-        <tr><td style="padding:24px 28px 8px 28px;text-align:center;border-bottom:1px solid #e8ecf0;">
-          {logo_block}
-        </td></tr>
-        <tr><td style="padding:24px 28px 8px 28px;font-family:Segoe UI,system-ui,sans-serif;font-size:15px;color:#222;">
-          {body_html}
-        </td></tr>
-        <tr><td style="padding:8px 28px 24px 28px;font-family:Segoe UI,system-ui,sans-serif;border-top:1px solid #e8ecf0;">
-          {footer}
-        </td></tr>
-      </table>
-    </td></tr>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="light" />
+  <meta name="supported-color-schemes" content="light" />
+  <title>Message from {name}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#ede9fe;">
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{name} — reply to your inquiry</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background-color:#ede9fe;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;">
+          <tr>
+            <td style="border-radius:16px 16px 0 0;overflow:hidden;background-color:#ffffff;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td height="5" style="font-size:5px;line-height:5px;background-color:#7c3aed;background-image:linear-gradient(90deg,#8b5cf6 0%,#5b21b6 50%,#4c1d95 100%);">&nbsp;</td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#faf5ff;border-left:1px solid #e9d5ff;border-right:1px solid #e9d5ff;padding:28px 32px 24px 32px;text-align:center;">
+              {logo_block}
+              <p style="margin:0;font-family:{font};font-size:11px;font-weight:600;letter-spacing:0.14em;text-transform:uppercase;color:#7c3aed;">Personal reply</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#ffffff;border-left:1px solid #e9d5ff;border-right:1px solid #e9d5ff;padding:8px 32px 36px 32px;">
+              {body_html}
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color:#fafafa;border:1px solid #e9d5ff;border-top:1px solid #ede9fe;padding:28px 32px 32px 32px;border-radius:0 0 16px 16px;">
+              {footer}
+            </td>
+          </tr>
+        </table>
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;">
+          <tr>
+            <td style="padding:16px 8px 0 8px;text-align:center;font-family:{font};font-size:11px;color:#78716c;">
+              Sent on behalf of {name}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
   </table>
-</body></html>"""
+</body>
+</html>"""
 
 
 def build_branded_visitor_email_plain(
@@ -171,10 +236,11 @@ def build_branded_visitor_email_plain(
     lines = [
         polished_plain_body.strip(),
         "",
-        "—",
-        f"{settings.owner_name}",
+        "────────────────────────────",
+        settings.owner_name,
         settings.owner_role,
         settings.portfolio_url,
-        f"Ref: session {session_short} · {settings.assistant_name}",
+        "",
+        f"Ref · session {session_short} · {settings.assistant_name}",
     ]
     return "\n".join(lines)

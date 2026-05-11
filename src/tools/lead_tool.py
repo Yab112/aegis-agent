@@ -22,6 +22,23 @@ def get_client():
     return _client
 
 
+def _pgrst_intent_column_missing(exc: BaseException) -> bool:
+    """
+    PostgREST PGRST204: ``intent`` not in schema cache (column not migrated / not reloaded).
+    Run ``scripts/supabase_handoff_telegram_intent.sql`` in Supabase SQL Editor.
+    """
+    raw = str(exc).lower()
+    if "pgrst204" in raw and "intent" in raw:
+        return True
+    if (
+        "could not find" in raw
+        and "intent" in raw
+        and "handoff_telegram" in raw
+    ):
+        return True
+    return False
+
+
 def log_lead(
     session_id: str,
     email: str,
@@ -91,7 +108,18 @@ def register_handoff_telegram_alert(
         }
         if intent:
             row["intent"] = str(intent).strip()[:120]
-        client.table("handoff_telegram_alerts").insert(row).execute()
+        try:
+            client.table("handoff_telegram_alerts").insert(row).execute()
+        except Exception as e:
+            if "intent" in row and _pgrst_intent_column_missing(e):
+                _log.warning(
+                    "handoff_telegram_alerts: intent column missing — insert without it. "
+                    "Apply scripts/supabase_handoff_telegram_intent.sql then NOTIFY pgrst."
+                )
+                row.pop("intent", None)
+                client.table("handoff_telegram_alerts").insert(row).execute()
+            else:
+                raise
     except Exception as e:
         _log.warning("handoff_telegram_alerts insert failed: %s", e)
 
@@ -102,14 +130,26 @@ def fetch_handoff_telegram_alert(
 ) -> dict | None:
     try:
         client = get_client()
-        r = (
-            client.table("handoff_telegram_alerts")
-            .select("session_id, visitor_email, user_query, intent")
-            .eq("telegram_chat_id", str(telegram_chat_id).strip())
-            .eq("telegram_message_id", int(telegram_message_id))
-            .limit(1)
-            .execute()
-        )
+        try:
+            r = (
+                client.table("handoff_telegram_alerts")
+                .select("session_id, visitor_email, user_query, intent")
+                .eq("telegram_chat_id", str(telegram_chat_id).strip())
+                .eq("telegram_message_id", int(telegram_message_id))
+                .limit(1)
+                .execute()
+            )
+        except Exception as e:
+            if not _pgrst_intent_column_missing(e):
+                raise
+            r = (
+                client.table("handoff_telegram_alerts")
+                .select("session_id, visitor_email, user_query")
+                .eq("telegram_chat_id", str(telegram_chat_id).strip())
+                .eq("telegram_message_id", int(telegram_message_id))
+                .limit(1)
+                .execute()
+            )
         rows = r.data or []
         return rows[0] if rows else None
     except Exception as e:

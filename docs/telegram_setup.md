@@ -59,7 +59,7 @@ This creates `handoff_telegram_alerts`, which maps each Telegram alert `message_
 
 ## Step 4 — Webhook (HTTPS required)
 
-1. Pick a long random secret. Telegram’s `secret_token` **must not** contain characters like `&`, `*`, or spaces — use **letters and digits** (and maybe `_-`) only. Set:
+1. Pick a long random secret. Telegram’s Bot API only allows **`A–Z`, `a–z`, `0–9`, `_`, `-`** in `secret_token` (no spaces, `&`, `*`, `#`, etc.). If you use anything else, `setWebhook` can fail or updates may not match your app’s `TELEGRAM_WEBHOOK_SECRET` (401). Set:
 
    ```bash
    TELEGRAM_WEBHOOK_SECRET=YourSafeAlphanumericSecretHere
@@ -77,6 +77,15 @@ This creates `handoff_telegram_alerts`, which maps each Telegram alert `message_
 
 If `TELEGRAM_WEBHOOK_SECRET` is set, every update must include header **`X-Telegram-Bot-Api-Secret-Token`** with that exact value (Telegram adds it when `secret_token` was set on `setWebhook`).
 
+### Webhook returns **401**
+
+That means the app rejected the request: the header did not match your env secret.
+
+- **Same value everywhere**: the string in **`TELEGRAM_WEBHOOK_SECRET`** on the host (e.g. Render) must be **byte-for-byte identical** to the `secret_token` you passed to `setWebhook` (no extra quotes, spaces, or a different secret on staging vs production).  
+  **Common mistake:** you ran `setWebhook` in a one-liner with secret `A`, but Render still has old secret `B` — Telegram always sends `A` in `X-Telegram-Bot-Api-Secret-Token`, so the app must use **`A`** in `TELEGRAM_WEBHOOK_SECRET` (or call `setWebhook` again with `B` after changing Render).
+- **Unset secret**: if the app has **no** `TELEGRAM_WEBHOOK_SECRET`, it does not check the header. If the app **has** a secret but Telegram was registered **without** `secret_token`, Telegram will not send the header → mismatch. Fix by either setting `secret_token` on `setWebhook` to match env, or clearing the env var if you accept unsigned webhooks (not recommended).
+- After changing env on Render, **redeploy** or restart so the new value is loaded.
+
 ---
 
 ## Step 5 — Google OAuth (Gmail)
@@ -88,9 +97,9 @@ The same **`GOOGLE_*`** credentials as Calendar must work, and the OAuth consent
 ## How to use it day-to-day
 
 1. Visitor triggers handoff; you get a **Telegram alert**.
-2. In Telegram, use **Reply** on that alert (threaded reply).
-3. Type your answer as **plain text** (used as the draft; Gemini can rephrase when `VISITOR_REPLY_EMAIL_POLISH` is true).
-4. If we had their **email**, they receive a branded **HTML** Gmail message from your connected Google account. You get a short confirmation reply under your message on Telegram.
+2. Use **Reply** on **that alert bubble** (swipe / quote the **notifyYab** “Aegis-Agent Lead Alert” message from the bot). A **new standalone message** is not linked to any visitor — only replies threaded to that alert’s `message_id` are emailed. If you get **several alerts** in a row (e.g. first question, then a follow-up with email), each bubble is separate: use Reply on **one** of them (often the **latest**) so your text is threaded to that message; do **not** reply only to your own previous message.
+3. Type your answer as **plain text** (draft for Gemini when `VISITOR_REPLY_EMAIL_POLISH` is true).
+4. If we had their **email**, they receive a branded **HTML** Gmail message; you get a short confirmation threaded under your reply on Telegram.
 
 If there was **no email** on the alert, the bot replies on Telegram asking you to handle it manually or get an email from the visitor on the site.
 
