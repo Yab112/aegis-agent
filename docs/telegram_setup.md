@@ -2,9 +2,11 @@
 
 When the agent classifies a message as **handoff** (rates, contracts, hiring, etc.), it sends you a briefing via **Telegram Bot API** `sendMessage`.
 
-When you **reply in Telegram to that alert** (same thread), the API receives a webhook, looks up the visitor’s email captured at handoff, and sends your reply text to them via **Gmail** (same Google OAuth as Calendar — `gmail.send` scope).
+When you **reply in Telegram to that alert** (same thread), the API receives a webhook, looks up the visitor’s email captured at handoff, and sends your reply to them via **Gmail** (same Google OAuth as Calendar — `gmail.send` scope). The outbound message is **multipart** (plain + **HTML**): optional **logo** in the header, polished **body**, and a **footer** with your name, role, portfolio link, and session reference. By default **Gemini** rewrites your Telegram draft into clearer professional prose using the visitor’s question and intent as context (toggle with `VISITOR_REPLY_EMAIL_POLISH`).
 
 The visitor does **not** get Telegram from this flow; they get **email** only after you reply on Telegram.
+
+**Typical delay:** a few seconds after Telegram delivers the webhook to your API — mostly **Gemini** (when polish is on) plus **Gmail** `users.messages.send`. Cold starts on free hosts add extra latency on the first request.
 
 ---
 
@@ -51,7 +53,7 @@ Run in **Supabase → SQL Editor** (once per project):
 
 [`scripts/supabase_handoff_telegram.sql`](../scripts/supabase_handoff_telegram.sql)
 
-This creates `handoff_telegram_alerts`, which maps each Telegram alert `message_id` to `session_id`, `visitor_email`, and `user_query` for the webhook.
+This creates `handoff_telegram_alerts`, which maps each Telegram alert `message_id` to `session_id`, `visitor_email`, `user_query`, and **`intent`** (for email polish context). If you created the table before `intent` existed, run [`scripts/supabase_handoff_telegram_intent.sql`](../scripts/supabase_handoff_telegram_intent.sql) once to add the column.
 
 ---
 
@@ -87,8 +89,8 @@ The same **`GOOGLE_*`** credentials as Calendar must work, and the OAuth consent
 
 1. Visitor triggers handoff; you get a **Telegram alert**.
 2. In Telegram, use **Reply** on that alert (threaded reply).
-3. Type your answer as **plain text** (your message body is emailed as-is).
-4. If we had their **email**, they receive a Gmail message from your connected Google account. You get a short confirmation reply under your message on Telegram.
+3. Type your answer as **plain text** (used as the draft; Gemini can rephrase when `VISITOR_REPLY_EMAIL_POLISH` is true).
+4. If we had their **email**, they receive a branded **HTML** Gmail message from your connected Google account. You get a short confirmation reply under your message on Telegram.
 
 If there was **no email** on the alert, the bot replies on Telegram asking you to handle it manually or get an email from the visitor on the site.
 
@@ -119,5 +121,7 @@ You should get a Telegram message within a few seconds.
 | `TELEGRAM_BOT_TOKEN` | Yes | Bot token from BotFather |
 | `TELEGRAM_CHAT_ID` | Yes | Chat that receives alerts (your DM with the bot) |
 | `TELEGRAM_WEBHOOK_SECRET` | Strongly recommended | Same value passed to `setWebhook` `secret_token` |
+| `EMAIL_BRAND_LOGO_URL` | Optional | HTTPS image URL for HTML email header |
+| `VISITOR_REPLY_EMAIL_POLISH` | Optional (default on) | `false` / `0` / `off` to send your Telegram text without Gemini rewrite |
 
 Remove any unused Meta Cloud API env vars from deployment if they are still present; the app only reads `TELEGRAM_*` for Telegram handoff.

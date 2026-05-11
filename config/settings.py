@@ -117,6 +117,26 @@ class Settings(BaseSettings):
     owner_role: str = "Full-Stack & AI Engineer"
     portfolio_url: str = "https://yabibal.site"
 
+    # HTML email to visitors (Telegram reply relay): HTTPS logo URL (e.g. Cloudinary or site static).
+    email_brand_logo_url: str | None = None
+    # When true, Gemini rewrites your Telegram draft into a professional email body before send.
+    visitor_reply_email_polish: bool = True
+
+    @field_validator("email_brand_logo_url", mode="before")
+    @classmethod
+    def strip_email_logo(cls, v: object) -> object:
+        if isinstance(v, str):
+            s = v.strip()
+            return s or None
+        return v
+
+    @field_validator("visitor_reply_email_polish", mode="before")
+    @classmethod
+    def parse_visitor_reply_polish(cls, v: object) -> object:
+        if isinstance(v, str):
+            return v.strip().lower() not in ("0", "false", "no", "off")
+        return v
+
     # Assistant persona (single voice for all chat — override with ASSISTANT_NAME in .env)
     assistant_name: str = "Aegis"
 
