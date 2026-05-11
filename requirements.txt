@@ -144,6 +144,7 @@ hypercorn>=0.17.0
 fastapi>=0.115.0
 langgraph>=0.2.0
 langchain-core>=0.3.0
+langchain-text-splitters>=0.3.0
 supabase>=2.0.0
 tenacity>=8.2.0
 virtualenv==20.26.6
