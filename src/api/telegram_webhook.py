@@ -74,6 +74,17 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
 
     reply_to = msg.get("reply_to_message")
     if not isinstance(reply_to, dict):
+        # Owner typed in chat but did not use Reply on the lead alert — we cannot map to a visitor.
+        loose = (msg.get("text") or msg.get("caption") or "").strip()
+        if loose and not loose.startswith("/"):
+            send_telegram_thread_reply(
+                chat_id=owner_chat,
+                reply_to_message_id=incoming_mid,
+                text=(
+                    "To email the visitor: open the Aegis-Agent Lead Alert message, "
+                    "use Reply there (thread), then send your text — not as a new standalone message."
+                ),
+            )
         return {"ok": True}
 
     orig_id = reply_to.get("message_id")
@@ -93,6 +104,15 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
     if not row:
         logger.info(
             "telegram webhook: no handoff row for reply_to message_id=%s", orig_id
+        )
+        send_telegram_thread_reply(
+            chat_id=owner_chat,
+            reply_to_message_id=incoming_mid,
+            text=(
+                "No saved lead for that alert (e.g. DB insert failed earlier, or you replied to the "
+                "wrong message). Fix deploy + Supabase per docs/telegram_setup.md, then get a "
+                "fresh lead alert and reply to that bubble."
+            ),
         )
         return {"ok": True}
 
