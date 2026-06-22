@@ -1,97 +1,121 @@
 # Google APIs setup guide
 
-You need three things: a Google Cloud project, OAuth 2.0 credentials,
-and a refresh token. Takes about 15 minutes.
+Two auth paths:
+
+| Feature | Auth | Expires? |
+|---------|------|----------|
+| **Calendar + Meet** (booking) | **Service account** (recommended) | Only if you revoke the key |
+| **Gmail** (Telegram → visitor email) | OAuth refresh token | Stable if consent screen is **Production** |
+
+OAuth-only setup works but refresh tokens break when the app stays in **Testing** (~7 days), you rotate OAuth clients, or Google revokes access. Use the service account for calendar so `/chat` booking never depends on a refresh token.
 
 ---
 
-## Step 1 — Create a Google Cloud project
+## Durable production setup (recommended)
+
+### A — Service account for Calendar + Meet
+
+1. [Google Cloud Console](https://console.cloud.google.com) → **IAM & Admin → Service Accounts → Create**
+2. Name: `aegis-calendar` → Create
+3. **Keys → Add key → JSON** → save as `config/google_service_account.json` (gitignored)
+4. **APIs & Services → Library** → enable **Google Calendar API** (same project)
+5. **Google Calendar** (web) → Settings → your calendar → **Share with specific people**
+   - Add the service account email (`something@project-id.iam.gserviceaccount.com`)
+   - Permission: **Make changes to events**
+6. Run helper:
+   ```bash
+   python scripts/google_service_account_setup.py
+   ```
+7. **Render** → Environment → add `GOOGLE_SERVICE_ACCOUNT_JSON` = paste the **entire JSON file as one line**
+
+Local `.env` can use a path instead:
+
+```
+GOOGLE_SERVICE_ACCOUNT_JSON=config/google_service_account.json
+```
+
+Keep `GOOGLE_CALENDAR_ID=youremail@gmail.com` (the calendar you shared).
+
+### B — OAuth for Gmail only
+
+1. **OAuth consent screen** → set **Publishing status** to **Production** (not Testing)
+   - Testing mode refresh tokens expire after ~7 days — this is the #1 cause of repeat `invalid_grant` errors
+2. **Credentials → OAuth client ID → Desktop app** → download JSON to `config/client_secret_….json`
+3. Run:
+   ```bash
+   python scripts/google_oauth_refresh_token.py
+   ```
+4. Put printed values in `.env` and Render:
+   ```
+   GOOGLE_CLIENT_ID=...
+   GOOGLE_CLIENT_SECRET=...
+   GOOGLE_REFRESH_TOKEN=...
+   ```
+
+Calendar uses the service account; Gmail uses OAuth. Booking keeps working even if Gmail OAuth needs a refresh later.
+
+---
+
+## Quick start (OAuth only — not recommended for Render)
+
+If you skip the service account, you need OAuth for both Calendar and Gmail. Takes ~15 minutes.
+
+### Step 1 — Create a Google Cloud project
 
 1. Go to https://console.cloud.google.com
 2. Click **New Project** → name it `aegis-agent`
 3. Select the project
 
----
-
-## Step 2 — Enable required APIs
-
-In the Google Cloud Console:
+### Step 2 — Enable required APIs
 
 1. Go to **APIs & Services → Library**
-2. Enable these (search each by name):
+2. Enable:
    - **Google Calendar API**
    - **Gmail API**
 
----
+### Step 3 — OAuth credentials
 
-## Step 3 — Create OAuth 2.0 credentials
+1. **APIs & Services → Credentials → Create Credentials → OAuth client ID**
+2. Application type: **Desktop app**
+3. Download JSON → `config/client_secret_….json`
 
-1. Go to **APIs & Services → Credentials**
-2. Click **Create Credentials → OAuth client ID**
-3. Application type: **Desktop app**
-4. Name: `aegis-agent-local`
-5. Download the JSON — you'll need `client_id` and `client_secret`
+OAuth consent screen:
 
-Also configure the OAuth consent screen:
 - User type: **External**
 - App name: `Aegis Agent`
-- Add your Gmail as a test user
 - Scopes: `calendar`, `gmail.send`
+- **Publish to Production** when ready (see above)
 
----
+### Step 4 — Refresh token
 
-## Step 4 — Get your refresh token (one-time)
-
-Run this script locally (NOT on the server — it opens a browser):
-
-```python
-# scripts/get_google_token.py
-from google_auth_oauthlib.flow import InstalledAppFlow
-
-SCOPES = [
-    "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/gmail.send",
-]
-
-flow = InstalledAppFlow.from_client_secrets_file(
-    "client_secret.json",  # the file you downloaded in Step 3
-    scopes=SCOPES,
-)
-creds = flow.run_local_server(port=0)
-
-print("ACCESS TOKEN:", creds.token)
-print("REFRESH TOKEN:", creds.refresh_token)
-print("CLIENT ID:", creds.client_id)
-print("CLIENT SECRET:", creds.client_secret)
-```
-
-Run it:
 ```bash
-pip install google-auth-oauthlib
-python scripts/get_google_token.py
+python scripts/google_oauth_refresh_token.py
 ```
 
-Copy the `REFRESH TOKEN` into your `.env` as `GOOGLE_REFRESH_TOKEN`.
-You only need to do this once — the refresh token doesn't expire
-unless you revoke it or exceed 50 unused tokens.
+Copy `GOOGLE_REFRESH_TOKEN` (and client id/secret) into `.env` and Render.
+
+### Step 5 — Calendar ID
+
+Primary calendar ID = your Gmail address.
+
+```
+GOOGLE_CALENDAR_ID=youremail@gmail.com
+CALENDAR_TIMEZONE=Africa/Addis_Ababa
+```
 
 ---
 
-## Step 5 — Find your calendar ID
-
-Your primary calendar ID is just your Gmail address.
-To find others: Calendar Settings → your calendar → **Calendar ID**.
-
-Set `GOOGLE_CALENDAR_ID=youremail@gmail.com` in `.env`.
-
----
-
-## Env vars summary
+## Env vars summary (production)
 
 ```
-GOOGLE_CLIENT_ID=your_client_id_from_step3
-GOOGLE_CLIENT_SECRET=your_client_secret_from_step3
-GOOGLE_REFRESH_TOKEN=your_refresh_token_from_step4
+# Calendar + Meet — does not expire
+GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
+
+# Gmail — publish OAuth app to Production
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_REFRESH_TOKEN=...
+
 GOOGLE_CALENDAR_ID=youremail@gmail.com
 CALENDAR_TIMEZONE=Africa/Addis_Ababa
 ```
@@ -104,5 +128,4 @@ CALENDAR_TIMEZONE=Africa/Addis_Ababa
 from src.tools.calendar_tool import check_availability
 slots = check_availability()
 print(slots)
-# Should print list of available 30-min slots
 ```
