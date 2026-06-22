@@ -450,17 +450,35 @@ def _slug_taken(client: Client, slug: str) -> bool:
     return bool(r.data)
 
 
+def _blog_posts_column_missing(exc: BaseException, column: str) -> bool:
+    """PostgREST / Postgres: column absent on blog_posts (schema not migrated)."""
+    raw = str(exc).lower()
+    col = column.lower()
+    if col not in raw:
+        return False
+    return "does not exist" in raw or "pgrst204" in raw or "42703" in raw
+
+
 def _run_key_exists(client: Client, run_key: str | None) -> bool:
     if not run_key:
         return False
-    r = (
-        client.table("blog_posts")
-        .select("id")
-        .eq("pipeline_run_key", run_key)
-        .limit(1)
-        .execute()
-    )
-    return bool(r.data)
+    try:
+        r = (
+            client.table("blog_posts")
+            .select("id")
+            .eq("pipeline_run_key", run_key)
+            .limit(1)
+            .execute()
+        )
+        return bool(r.data)
+    except Exception as e:
+        if _blog_posts_column_missing(e, "pipeline_run_key"):
+            logger.warning(
+                "blog_posts.pipeline_run_key missing — skipping CI run-key dedup. "
+                "Run scripts/supabase_blog_posts_pipeline_run_key.sql in Supabase."
+            )
+            return False
+        raise
 
 
 def _unique_slug(client: Client, base_slug: str) -> str:

@@ -19,6 +19,8 @@ build/
 
 # Google OAuth (never commit these)
 client_secret.json
+config/client_secret*.json
+scripts/google_oauth_client.json
 token.json
 credentials.json
 
