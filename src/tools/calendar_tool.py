@@ -2,7 +2,9 @@
 Google Calendar + Meet tool.
 
 Checks real-time availability and creates Google Meet links.
-Uses OAuth2 refresh token flow — no browser needed after initial setup.
+Uses a Google service account for Calendar when GOOGLE_SERVICE_ACCOUNT_JSON is set
+(recommended for production — no refresh tokens). Otherwise OAuth2 refresh token flow.
+Gmail always uses OAuth (Telegram → visitor email).
 
 APIs used (all free):
 - Google Calendar API v3
@@ -18,9 +20,9 @@ from email.message import EmailMessage
 from zoneinfo import ZoneInfo
 
 from google.auth.exceptions import RefreshError
-from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from config.settings import get_settings
+from src.tools.google_auth import get_calendar_credentials, get_oauth_credentials
 
 settings = get_settings()
 logger = logging.getLogger("aegis.calendar")
@@ -41,10 +43,10 @@ def _message_for_refresh_error(err: RefreshError) -> str:
     if "invalid_grant" in raw:
         return (
             "Google refresh token is expired or revoked (invalid_grant). "
-            "Update GOOGLE_REFRESH_TOKEN: from the project root run "
-            "`python scripts/google_oauth_refresh_token.py` (venv), sign in, then paste "
-            "the printed token into .env. Client id/secret can be correct while the old "
-            "refresh token is dead."
+            "For Calendar: set GOOGLE_SERVICE_ACCOUNT_JSON (see docs/google_apis_setup.md) "
+            "so booking does not depend on OAuth. For Gmail: run "
+            "`python scripts/google_oauth_refresh_token.py`, update GOOGLE_REFRESH_TOKEN, "
+            "and publish OAuth consent to Production (Testing mode tokens expire in ~7 days)."
         )
     if "invalid_client" in raw:
         return (
@@ -58,15 +60,14 @@ def _message_for_refresh_error(err: RefreshError) -> str:
     )
 
 
-def _get_credentials() -> Credentials:
-    return Credentials(
-        token=None,
-        refresh_token=settings.google_refresh_token,
-        client_id=settings.google_client_id,
-        client_secret=settings.google_client_secret,
-        token_uri="https://oauth2.googleapis.com/token",
-        scopes=SCOPES,
-    )
+def _get_calendar_service():
+    creds = get_calendar_credentials()
+    return build("calendar", "v3", credentials=creds)
+
+
+def _get_gmail_service():
+    creds = get_oauth_credentials()
+    return build("gmail", "v1", credentials=creds)
 
 
 def _reraise_refresh_as_clear(err: RefreshError) -> None:
@@ -139,8 +140,7 @@ def check_availability(days_ahead: int = 14, max_collect: int = 72) -> list[dict
     which skewed results). Callers should use :func:`diversify_slots` or
     :func:`filter_slots_by_weekday` to pick a user-facing subset.
     """
-    creds = _get_credentials()
-    service = build("calendar", "v3", credentials=creds)
+    service = _get_calendar_service()
     cal_tz = ZoneInfo(settings.calendar_timezone)
 
     logger.info(
@@ -276,8 +276,7 @@ def create_meet_link(slot: dict, attendee_email: str | None = None) -> str | Non
 
     Returns the Google Meet URL or None on failure.
     """
-    creds = _get_credentials()
-    service = build("calendar", "v3", credentials=creds)
+    service = _get_calendar_service()
     logger.info(
         "calendar: events.insert + Meet conferenceData calendarId=%s",
         settings.google_calendar_id,
@@ -338,8 +337,7 @@ def send_gmail_plain_text(*, to_addr: str, subject: str, body: str) -> bool:
     if not to_addr:
         return False
     try:
-        creds = _get_credentials()
-        service = build("gmail", "v1", credentials=creds)
+        service = _get_gmail_service()
         msg = EmailMessage()
         msg["To"] = to_addr
         msg["Subject"] = (subject or "Message from portfolio").strip() or "Message from portfolio"
@@ -369,8 +367,7 @@ def send_gmail_multipart(
     if not to_addr:
         return False
     try:
-        creds = _get_credentials()
-        service = build("gmail", "v1", credentials=creds)
+        service = _get_gmail_service()
         msg = EmailMessage()
         msg["To"] = to_addr
         msg["Subject"] = (subject or "Message from portfolio").strip() or "Message from portfolio"

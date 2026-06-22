@@ -20,6 +20,9 @@ build/
 # Google OAuth (never commit these)
 client_secret.json
 config/client_secret*.json
+config/google_service_account.json
+config/gmail-integration-*.json
+google_service_account.json
 scripts/google_oauth_client.json
 token.json
 credentials.json

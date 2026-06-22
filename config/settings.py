@@ -42,12 +42,23 @@ class Settings(BaseSettings):
     # Only for local scripts (e.g. apply_supabase_schema.py); the FastAPI app uses REST + service key.
     supabase_db_password: str | None = None
 
-    # Google
+    # Google — Calendar + Gmail
     google_client_id: str
     google_client_secret: str
     google_refresh_token: str
     google_calendar_id: str
     calendar_timezone: str = "Africa/Addis_Ababa"
+    # Recommended for production: service account JSON (inline or path). Calendar/Meet use this
+    # instead of OAuth refresh tokens. Share your calendar with the service account email.
+    google_service_account_json: str | None = None
+
+    @field_validator("google_service_account_json", mode="before")
+    @classmethod
+    def strip_google_service_account_json(cls, v: object) -> object:
+        if isinstance(v, str):
+            s = v.strip()
+            return s or None
+        return v
 
     # Telegram (handoff alerts to owner — see docs/telegram_setup.md)
     telegram_bot_token: str
