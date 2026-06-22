@@ -11,6 +11,10 @@ Run in order (SQL Editor):
 1. [`scripts/supabase_blog_posts.sql`](../scripts/supabase_blog_posts.sql) — `blog_posts` (if not already).
 2. [`scripts/supabase_blog_ideas.sql`](../scripts/supabase_blog_ideas.sql) — `blog_ideas` queue + optional `blog_posts.scheduled_publish_at`.
 
+If **blog-draft** CI fails with `column blog_posts.pipeline_run_key does not exist`, run once:
+
+[`scripts/supabase_blog_posts_pipeline_run_key.sql`](../scripts/supabase_blog_posts_pipeline_run_key.sql)
+
 ---
 
 ## 2. Tables
