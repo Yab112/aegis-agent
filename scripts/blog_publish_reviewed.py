@@ -76,7 +76,7 @@ def main() -> None:
                 continue
             update_res = client.table("blog_posts").update(
                 {"status": "published", "published_at": now.isoformat()}
-            ).eq("id", row["id"]).select("id,slug,title,topic_key,tags,image_url,og_image_url,published_at").execute()
+            ).select("id,slug,title,topic_key,tags,image_url,og_image_url,published_at").eq("id", row["id"]).execute()
             publish_row = (update_res.data or [{}])[0]
             notify_blog_post_published(
                 post=publish_row,
@@ -116,7 +116,7 @@ def main() -> None:
                 continue
         update_res = client.table("blog_posts").update(
             {"status": "published", "published_at": now.isoformat()}
-        ).eq("id", row["id"]).select("id,slug,title,topic_key,tags,image_url,og_image_url,published_at").execute()
+        ).select("id,slug,title,topic_key,tags,image_url,og_image_url,published_at").eq("id", row["id"]).execute()
         publish_row = (update_res.data or [{}])[0]
         notify_blog_post_published(
             post=publish_row,
