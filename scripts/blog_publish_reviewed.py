@@ -74,10 +74,13 @@ def main() -> None:
         for row in res.data or []:
             if row.get("published_at"):
                 continue
-            update_res = client.table("blog_posts").update(
+            client.table("blog_posts").update(
                 {"status": "published", "published_at": now.isoformat()}
-            ).select("id,slug,title,topic_key,tags,image_url,og_image_url,published_at").eq("id", row["id"]).execute()
-            publish_row = (update_res.data or [{}])[0]
+            ).eq("id", row["id"]).execute()
+            publish_row = {
+                **row,
+                "published_at": now.isoformat(),
+            }
             notify_blog_post_published(
                 post=publish_row,
                 source="review_publish_job",
@@ -114,10 +117,13 @@ def main() -> None:
                 skipped += 1
                 logger.info("skip id=%s — scheduled_publish_at in future", row["id"])
                 continue
-        update_res = client.table("blog_posts").update(
+        client.table("blog_posts").update(
             {"status": "published", "published_at": now.isoformat()}
-        ).select("id,slug,title,topic_key,tags,image_url,og_image_url,published_at").eq("id", row["id"]).execute()
-        publish_row = (update_res.data or [{}])[0]
+        ).eq("id", row["id"]).execute()
+        publish_row = {
+            **row,
+            "published_at": now.isoformat(),
+        }
         notify_blog_post_published(
             post=publish_row,
             source="review_publish_job",
