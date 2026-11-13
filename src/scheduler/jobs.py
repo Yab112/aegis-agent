@@ -24,9 +24,13 @@ class JobDef:
     name: str
     title: str
     description: str
-    cron: str
+    # 5-field cron (UTC). None for change-driven jobs, which use `fingerprint` instead.
+    cron: str | None
     run: Callable[[JobContext], dict[str, Any]]
     lease_seconds: int = 30 * 60
+    # Change-driven job: runs whenever this value differs from the `fingerprint`
+    # stored in its last successful result (e.g. after a deploy changed its input).
+    fingerprint: Callable[[], str] | None = None
 
 
 def _is_quota_error(exc: BaseException) -> bool:
@@ -82,6 +86,18 @@ def _run_blog_publish(ctx: JobContext) -> dict[str, Any]:
     return run_publish_reviewed(ctx.settings.supabase_url, ctx.settings.supabase_service_key)
 
 
+def _run_kb_ingest(ctx: JobContext) -> dict[str, Any]:
+    from src.rag.ingest import run_kb_ingest
+
+    return run_kb_ingest(ctx.settings.supabase_url, ctx.settings.supabase_service_key)
+
+
+def _kb_fingerprint() -> str:
+    from src.rag.ingest import kb_fingerprint
+
+    return kb_fingerprint()
+
+
 def build_jobs(settings: Any) -> dict[str, JobDef]:
     jobs = [
         JobDef(
@@ -107,4 +123,15 @@ def build_jobs(settings: Any) -> dict[str, JobDef]:
             lease_seconds=10 * 60,
         ),
     ]
+    if getattr(settings, "scheduler_kb_ingest_on_change", True):
+        jobs.append(
+            JobDef(
+                name="kb_ingest",
+                title="Knowledge sync",
+                description="Re-embeds the knowledge base whenever a deploy changes the docs the chat agent answers from.",
+                cron=None,
+                run=_run_kb_ingest,
+                fingerprint=_kb_fingerprint,
+            )
+        )
     return {j.name: j for j in jobs}

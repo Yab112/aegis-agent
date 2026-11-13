@@ -114,9 +114,6 @@ aegis-agent/
 │   └── deployment.md
 ├── public/
 │   └── chat.html             # Browser chat tester (GET /chat-ui)
-├── .github/
-│   └── workflows/
-│       └── ingest.yml        # Re-ingest when docs/knowledge_base/** changes
 ├── .env.example
 ├── requirements.txt
 ├── Dockerfile
@@ -147,17 +144,12 @@ Versioning: all public endpoints above also have `/v1` aliases (for example `/v1
 
 ---
 
-## GitHub Actions workflows
+## Knowledge base sync (built-in)
 
-### `ingest.yml` — Knowledge base re-ingestion
-
-Triggers automatically on any push that modifies `docs/knowledge_base/**`, or manually from the GitHub UI.
-
-```
-push to docs/knowledge_base/** ──► checkout → install → python scripts/ingest.py
-```
-
-Required secrets: `GEMINI_API_KEY`, `HF_API_TOKEN`, `EMBEDDING_MODEL`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
+No GitHub Actions. The API fingerprints `docs/knowledge_base/**` on boot; when a deploy changes those docs the
+`kb_ingest` job re-embeds what changed and removes rows for chunks that no longer exist. It is idempotent, so
+an unchanged knowledge base costs zero embedding calls. Run it by hand with `python scripts/ingest.py` or
+`POST /internal/scheduler/jobs/kb_ingest/run`.
 
 ## Blog automation (built-in scheduler)
 

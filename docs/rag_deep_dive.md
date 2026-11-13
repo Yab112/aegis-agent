@@ -167,7 +167,7 @@ code snippets. Gemini 1.5 Flash can generate 1024 tokens in ~1–2 seconds.
 
 1. Create a folder: `docs/knowledge_base/your_project_name/`
 2. Add your docs (MD, code files, JSON metadata)
-3. Push to GitHub — the ingestion workflow fires automatically
+3. Deploy — on boot the API sees the docs changed and re-ingests them
 4. New chunks are upserted (existing chunks with same content are skipped)
 
 The `project_name` is inferred from the folder name and injected into

@@ -145,6 +145,8 @@ class Settings(BaseSettings):
     scheduler_keep_awake: bool = True
     scheduler_keep_awake_minutes: int = 10
     public_base_url: str | None = None
+    # Re-ingest docs/knowledge_base/** when its content differs from the last ingested version.
+    scheduler_kb_ingest_on_change: bool = True
     # Telegram message to the owner when a scheduled job publishes or gives up.
     scheduler_notify_telegram: bool = True
 

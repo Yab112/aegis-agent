@@ -50,6 +50,10 @@ The pipeline no longer depends on GitHub Actions. The FastAPI process runs its o
 | `blog_draft` | Every 5 days 09:00 (`0 9 */5 * *`) | `SCHEDULER_BLOG_DRAFT_CRON` | Picks oldest **pending** idea (skill tier), writes the post, generates a cover via Gemini, uploads to Cloudinary, inserts the post. Status comes from `SCHEDULER_BLOG_DRAFT_STATUS` (default **`published`**). |
 | `blog_publish` | Daily 12:00 (`0 12 * * *`) | `SCHEDULER_BLOG_PUBLISH_CRON` | `review` → `published` only (see below) |
 
+A fourth job, `kb_ingest`, is change-driven rather than timed: on boot the API compares a fingerprint of
+`docs/knowledge_base/**` with the last ingested one and re-embeds only when a deploy changed the docs
+(`SCHEDULER_KB_INGEST_ON_CHANGE=false` turns it off). Nothing in this service is scheduled by GitHub any more.
+
 ### One-time setup
 
 1. Run [`scripts/supabase_scheduler.sql`](../scripts/supabase_scheduler.sql) in the Supabase SQL Editor

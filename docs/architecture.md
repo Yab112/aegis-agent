@@ -46,7 +46,7 @@ faster and more reliable than relying on the LLM for obvious cases.
 
 ## Data flow (ingestion vs query time)
 
-**Ingestion (runs once, then on each docs change via GitHub Actions):**
+**Ingestion (the API re-ingests on boot whenever the docs changed):**
 ```
 docs/knowledge_base/**
     → chunk_document() (type-aware chunking)

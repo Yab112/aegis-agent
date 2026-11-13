@@ -49,7 +49,9 @@ class Scheduler:
         self._now = now_fn
         self._notify = notifier
         self._owner = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
-        self._crons = {name: CronSpec.parse(job.cron) for name, job in jobs.items()}
+        self._crons = {name: CronSpec.parse(job.cron) for name, job in jobs.items() if job.cron}
+        self._fingerprints: dict[str, str] = {}
+        self._ingested: dict[str, str] = {}
         self._tasks: list[asyncio.Task[Any]] = []
         self.storage_error: str | None = None
         self.started_at: datetime | None = None
@@ -61,9 +63,11 @@ class Scheduler:
         row = self.store.get_job(name)
         if row:
             return row
-        slot = self._crons[name].prev_fire(now)
-        seed = None if self.settings.scheduler_run_missed_on_first_boot else slot
-        self.store.create_job(name, self.jobs[name].cron, seed)
+        cron = self._crons.get(name)
+        seed = None
+        if cron and not self.settings.scheduler_run_missed_on_first_boot:
+            seed = cron.prev_fire(now)
+        self.store.create_job(name, self.jobs[name].cron or "on-change", seed)
         logger.info("scheduler: registered job=%s cron=%r last_slot=%s", name, self.jobs[name].cron, seed)
         return self.store.get_job(name) or {"job_name": name, "last_slot": seed, "enabled": True}
 
@@ -85,6 +89,27 @@ class Scheduler:
             return None
         return slot
 
+    def change_due(self, name: str, now: datetime | None = None) -> bool:
+        """Change-driven job: due when its input fingerprint differs from the last ingested one."""
+        now = now or self._now()
+        row = self._ensure_row(name, now)
+        if row.get("enabled") is False:
+            return False
+        retry_at = parse_ts(row.get("next_attempt_at"))
+        if retry_at and retry_at > now:
+            return False
+        locked = parse_ts(row.get("locked_until"))
+        if locked and locked > now:
+            return False
+        if name not in self._fingerprints:  # inputs ship with the build: hash once per process
+            fn = self.jobs[name].fingerprint
+            self._fingerprints[name] = fn() if fn else ""
+        last = row.get("last_result") if row.get("last_status") == "success" else None
+        stored = last.get("fingerprint") if isinstance(last, dict) else None
+        # A failed run keeps the previous success's fingerprint out of last_result, so also
+        # remember what we last ingested successfully in this process.
+        return self._fingerprints[name] != (stored or self._ingested.get(name))
+
     def tick(self) -> list[dict[str, Any]]:
         """Run every due job once (sequentially). Safe to call from anywhere, any time."""
         now = self._now()
@@ -92,6 +117,12 @@ class Scheduler:
         out: list[dict[str, Any]] = []
         for name in self.jobs:
             try:
+                if self.jobs[name].fingerprint:
+                    change = self.change_due(name, now)
+                    self.storage_error = None
+                    if change:
+                        out.append(self.run_job(name, trigger="change"))
+                    continue
                 slot = self.due_slot(name, now)
                 self.storage_error = None
             except Exception as exc:
@@ -157,6 +188,19 @@ class Scheduler:
             "last_result": result,
         }
         gave_up = False
+        if trigger == "change":
+            if status == "success":
+                fields.update(slot_attempts=0, next_attempt_at=None)
+            else:
+                attempts = int(row.get("slot_attempts") or 0) + 1
+                if attempts >= max(1, self.settings.scheduler_max_attempts):
+                    gave_up = True  # try again tomorrow rather than hammering a broken dependency
+                    fields.update(slot_attempts=0, next_attempt_at=finished + timedelta(hours=24))
+                else:
+                    backoff = self.settings.scheduler_retry_backoff_minutes * 2 ** (attempts - 1)
+                    fields.update(slot_attempts=attempts, next_attempt_at=finished + timedelta(minutes=backoff))
+        if status == "success" and isinstance(result, dict) and result.get("fingerprint"):
+            self._ingested[name] = str(result["fingerprint"])
         if trigger == "schedule" and slot is not None:
             if status == "success":
                 fields.update(last_slot=slot, slot_attempts=0, next_attempt_at=None)
@@ -215,7 +259,12 @@ class Scheduler:
         if not self._notify:
             return
         msg: str | None = None
-        if status == "failed" and (gave_up or trigger == "manual"):
+        if job.name == "kb_ingest" and status == "success" and result:
+            msg = (
+                f"🧠 Knowledge base synced: {result.get('embedded')} new chunk(s), "
+                f"{result.get('removed')} removed, {result.get('chunks')} total."
+            )
+        elif status == "failed" and (gave_up or trigger == "manual"):
             msg = f"⚠️ Aegis scheduler: {job.name} failed ({trigger}).\n{error}"
         elif status == "success" and result:
             base = str(self.settings.portfolio_url).rstrip("/")
@@ -255,11 +304,11 @@ class Scheduler:
                 "name": name,
                 "title": job.title,
                 "description": job.description,
-                "cron": job.cron,
+                "cron": job.cron or "on change",
                 "enabled": row.get("enabled", True),
                 "last_status": row.get("last_status"),
                 "last_run_at": row.get("last_finished_at"),
-                "next_run_at": self._crons[name].next_fire(now).isoformat(),
+                "next_run_at": self._crons[name].next_fire(now).isoformat() if name in self._crons else None,
             }
             if not public:
                 item.update(
@@ -329,7 +378,7 @@ class Scheduler:
             self._tasks.append(asyncio.create_task(self._keep_awake_loop(url), name="aegis-keep-awake"))
         logger.info(
             "scheduler: started jobs=%s tick=%ss keep_awake=%s",
-            ", ".join(f"{n}[{j.cron}]" for n, j in self.jobs.items()),
+            ", ".join(f"{n}[{j.cron or 'on change'}]" for n, j in self.jobs.items()),
             self.settings.scheduler_tick_seconds,
             url or "off (no public URL known)",
         )
