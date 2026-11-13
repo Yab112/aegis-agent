@@ -8,6 +8,10 @@ class AgentState(TypedDict):
     session_id: str
     user_query: str
 
+    # Who is asking: "human" | "ai_agent" | "crawler" (see src/agent/visitor.py)
+    visitor_kind: Optional[str]
+    visitor_agent: Optional[str]
+
     # Routing
     intent: Optional[str]           # "general_qa" | "book_meeting" | "handoff"
     # book_meeting only: "availability" (list slots, ask for pick + email) vs "schedule" (create event)

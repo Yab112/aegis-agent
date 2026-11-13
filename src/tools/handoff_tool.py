@@ -35,6 +35,8 @@ def send_telegram_briefing(
     intent: str,
     session_id: str,
     user_email: str | None = None,
+    text: str | None = None,
+    reply_markup: dict | None = None,
 ) -> TelegramBriefingResult:
     """
     Send a formatted lead briefing to the configured Telegram chat.
@@ -59,6 +61,8 @@ def send_telegram_briefing(
         "(when email was provided).\n"
         "Suggested response time: within 24 hours"
     )
+    if text:  # a prepared briefing (src/tools/handoff_brief.py) replaces the basic layout
+        message_body = text
     if len(message_body) > TELEGRAM_MAX_MESSAGE_LEN:
         message_body = message_body[: TELEGRAM_MAX_MESSAGE_LEN - 20] + "\n…(truncated)"
 
@@ -70,6 +74,8 @@ def send_telegram_briefing(
         "text": message_body,
         "disable_web_page_preview": True,
     }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
 
     logger.info(
         "handoff: POST api.telegram.org sendMessage (session intent=%s)",
@@ -136,4 +142,20 @@ def send_telegram_thread_reply(
         return bool(data.get("ok"))
     except Exception as e:
         logger.warning("handoff: thread reply failed: %s", e)
+        return False
+
+
+def telegram_call(method: str, payload: dict) -> bool:
+    """Call a Bot API method; returns False (never raises) on any failure."""
+    settings = get_settings()
+    try:
+        r = httpx.post(
+            f"{_telegram_api_base(settings.telegram_bot_token)}/{method}",
+            json=payload,
+            timeout=10,
+        )
+        r.raise_for_status()
+        return bool((r.json() if r.content else {}).get("ok"))
+    except Exception as e:
+        logger.warning("handoff: telegram %s failed: %s", method, e)
         return False
