@@ -1,13 +1,16 @@
 {
   "name": "Yabibal Eshetie Molla",
   "short_name": "Yabibal",
-  "role": "Full-Stack Engineer · Senior Lead (AI)",
+  "role": "Full-stack and AI engineer",
   "location": "Addis Ababa, Ethiopia",
   "portfolio_url": "https://yabibal.site",
-  "tagline": "Fullstack engineer specializing in AI security, self-healing automation, and production-grade multi-tenant systems.",
-  "current_role": "Software Developer · Senior Lead (AI) @ Orizon Technology (Nov 2025–Present, hybrid)",
-  "education": "Addis Ababa University, B.Sc. Computer Science and Engineering (Information Science), 2015–2019",
-  "languages_spoken": ["English", "Amharic"],
+  "tagline": "I build AI systems that keep working after launch day.",
+  "current_role": "Senior Full-Stack Developer @ LohnPulse (Oct 2026–Present, remote); AI Benchmark & ML Challenge Developer @ Shipd (Oct 2026–Present); AI/ML Evaluation & Full-Stack Engineer @ Revelo (Oct 2025–Present); Orizon Technology (Aug 2025–Present)",
+  "education": "Addis Ababa University, B.Sc. Information Science (2020–2025), passed the national exit exam. A2SV (Africa to Silicon Valley), 16-month Data Structures & Algorithms program (2024–2025).",
+  "languages_spoken": [
+    "English",
+    "Amharic"
+  ],
   "core_skills": [
     "Python (FastAPI, LangChain, LangGraph)",
     "TypeScript / JavaScript (Next.js, React, Node, Express)",
@@ -25,5 +28,6 @@
   "linkedin": "https://www.linkedin.com/in/yabibal-eshetie/",
   "medium": "https://medium.com/@yabibal112",
   "leetcode": "https://leetcode.com/u/yab21-herrii/",
-  "codeforces": "https://codeforces.com/profile/eshetieyabibal"
+  "codeforces": "https://codeforces.com/profile/eshetieyabibal",
+  "availability": "Open to remote AI engineering and full-stack roles. Based in Addis Ababa (EAT); working hours overlap Europe and US mornings."
 }
