@@ -320,3 +320,134 @@ def test_public_status_is_sanitized():
     assert "last_error" not in job and "last_result" not in job
     assert "owner" not in body and "storage_error" not in body
     assert "secret-ish" not in str(body)
+
+
+# ── change-driven jobs (knowledge-base sync) ────────────────────────────────
+
+
+def _make_change_job(run, fingerprint, **settings_over):
+    clock = _Clock(_dt(2026, 1, 10, 8, 0))
+    store = InMemorySchedulerStore()
+    notes: list[str] = []
+    job = JobDef(name="kb", title="KB", description="d", cron=None, run=run, fingerprint=fingerprint)
+    sched = Scheduler(store, {"kb": job}, _settings(**settings_over), now_fn=clock, notifier=notes.append)
+    return sched, store, clock
+
+
+def test_change_job_runs_once_per_fingerprint_and_survives_restart():
+    calls = []
+    run = lambda ctx: calls.append(ctx.trigger) or {"fingerprint": "v1"}
+    sched, store, clock = _make_change_job(run, lambda: "v1")
+
+    assert [o["status"] for o in sched.tick()] == ["success"]  # first boot: ingest
+    assert sched.tick() == [] and calls == ["change"]
+
+    # A fresh process with the same docs reads the stored fingerprint and stays idle.
+    restarted = Scheduler(store, sched.jobs, _settings(), now_fn=clock)
+    assert restarted.tick() == []
+
+    # A deploy that changes the docs triggers exactly one more run.
+    job = JobDef(name="kb", title="KB", description="d", cron=None,
+                 run=lambda ctx: calls.append("v2") or {"fingerprint": "v2"}, fingerprint=lambda: "v2")
+    deployed = Scheduler(store, {"kb": job}, _settings(), now_fn=clock)
+    assert len(deployed.tick()) == 1 and deployed.tick() == []
+    assert deployed.status(public=True)["jobs"][0]["next_run_at"] is None
+
+
+def test_change_job_failure_backs_off_then_waits_a_day():
+    def boom(ctx):
+        raise RuntimeError("embeddings down")
+
+    sched, store, clock = _make_change_job(boom, lambda: "v1", scheduler_max_attempts=2)
+    sched.tick()
+    assert parse_ts(store.get_job("kb")["next_attempt_at"]) == clock.now + timedelta(minutes=10)
+    assert sched.tick() == []
+    clock.now += timedelta(minutes=10)
+    sched.tick()
+    assert parse_ts(store.get_job("kb")["next_attempt_at"]) == clock.now + timedelta(hours=24)
+
+
+# ── knowledge-base ingest ───────────────────────────────────────────────────
+
+
+class _Docs:
+    """Minimal stand-in for the Supabase `documents` table."""
+
+    def __init__(self, rows):
+        self.rows = {r["id"]: r for r in rows}
+        self._op = None
+
+    def table(self, _name):
+        return self
+
+    def select(self, _cols):
+        self._op = ("select",)
+        return self
+
+    def range(self, a, b):
+        self._op = ("select", a, b)
+        return self
+
+    def upsert(self, rows):
+        self._op = ("upsert", rows)
+        return self
+
+    def delete(self):
+        self._op = ("delete",)
+        return self
+
+    def in_(self, _col, ids):
+        self._op = ("delete", ids)
+        return self
+
+    def execute(self):
+        op = self._op
+        if op[0] == "select":
+            ids = sorted(self.rows)[op[1] : op[2] + 1]
+            return SimpleNamespace(data=[{"id": i} for i in ids])
+        if op[0] == "upsert":
+            for r in op[1]:
+                self.rows[r["id"]] = r
+        if op[0] == "delete":
+            for i in op[1]:
+                self.rows.pop(i, None)
+        return SimpleNamespace(data=[])
+
+
+def test_kb_ingest_is_idempotent_and_prunes_stale_rows(tmp_path, monkeypatch):
+    import supabase
+
+    import src.rag.embedder as embedder
+    from src.rag import ingest
+
+    kb = tmp_path / "kb"
+    (kb / "general").mkdir(parents=True)
+    (kb / "general" / "about.md").write_text("# About\n\nYabibal builds AI systems.\n")
+    (kb / "general" / "stack.md").write_text("# Stack\n\nNext.js and FastAPI.\n")
+
+    docs = _Docs([{"id": "11111111-1111-1111-1111-111111111111", "content": "old random-id row"}])
+    embedded: list[list[str]] = []
+    monkeypatch.setattr(supabase, "create_client", lambda *_a: docs)
+    monkeypatch.setattr(embedder, "embed_texts", lambda texts: embedded.append(list(texts)) or [[0.1, 0.2]] * len(texts))
+
+    first = ingest.run_kb_ingest("u", "k", base=kb)
+    assert first["embedded"] == first["chunks"] >= 2 and first["removed"] == 1
+    assert "11111111-1111-1111-1111-111111111111" not in docs.rows
+    assert all(r["embedding"] == "[0.1,0.2]" for r in docs.rows.values())
+
+    again = ingest.run_kb_ingest("u", "k", base=kb)  # nothing changed → no embedding calls
+    assert again["embedded"] == 0 and again["removed"] == 0 and again["fingerprint"] == first["fingerprint"]
+    assert len(embedded) == 1
+
+    (kb / "general" / "stack.md").unlink()
+    after = ingest.run_kb_ingest("u", "k", base=kb)
+    assert after["removed"] >= 1 and after["embedded"] == 0
+    assert after["fingerprint"] != first["fingerprint"]
+    assert len(docs.rows) == after["chunks"]
+
+
+def test_kb_ingest_refuses_to_wipe_store_when_docs_missing(tmp_path, monkeypatch):
+    from src.rag import ingest
+
+    with pytest.raises(RuntimeError):
+        ingest.run_kb_ingest("u", "k", base=tmp_path / "missing")
