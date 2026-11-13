@@ -14,11 +14,11 @@ Fullstack engineer specializing in AI security, self-healing automation, and pro
 
 ## Current role
 
-**Software Developer · Senior Lead (AI) @ Orizon Technology** (Nov 2025 – Present, Addis Ababa, hybrid): senior lead on AI — design, development, and deployment of ML-driven intelligent applications; cross-functional requirements to scalable AI solutions; mentoring; code quality and ethical AI.
+**Software Developer · Senior Lead (AI) @ Orizon Technology** (at Orizon since Aug 2025: Senior Lead Aug 2025 – May 2026, Software Developer Nov 2025 – Present; Addis Ababa, hybrid): senior lead on AI — design, development, and deployment of ML-driven intelligent applications; cross-functional requirements to scalable AI solutions; mentoring; code quality and ethical AI.
 
 ## Education
 
-**Addis Ababa University** — B.Sc. Computer Science and Engineering (Information Science), 2015–2019. Coursework: algorithms, software engineering, databases, systems design.
+**Addis Ababa University** — B.Sc. Information Science, 2020–2025 (passed the national exit exam). Coursework: algorithms, software engineering, databases, systems design.
 
 ## Other experience (portfolio)
 
