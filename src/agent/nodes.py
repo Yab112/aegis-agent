@@ -21,6 +21,8 @@ from src.tools.calendar_tool import (
     diversify_slots,
     filter_slots_by_weekday,
 )
+from src.agent.visitor import AI_AGENT_STYLE, VisitorProfile
+from src.tools.handoff_brief import build_handoff_brief
 from src.tools.handoff_tool import send_telegram_briefing
 from src.tools.lead_tool import log_lead, register_handoff_telegram_alert
 
@@ -198,11 +200,30 @@ def handoff_node(state: AgentState) -> dict:
             query=state["user_query"],
         )
 
+    visitor = VisitorProfile(
+        kind=state.get("visitor_kind") or "human",
+        agent_name=state.get("visitor_agent"),
+    )
+    prepared = build_handoff_brief(
+        query=state["user_query"],
+        intent=state.get("intent") or "handoff",
+        session_id=state["session_id"],
+        user_email=user_email,
+        history=[
+            ("visitor" if getattr(m, "type", "") == "human" else "assistant", str(m.content))
+            for m in state.get("messages", [])
+            if hasattr(m, "content")
+        ],
+        visitor=visitor,
+        assistant_name=settings.assistant_name,
+    )
     brief = send_telegram_briefing(
         query=state["user_query"],
         intent=state.get("intent", "sensitive"),
         session_id=state["session_id"],
         user_email=user_email,
+        text=prepared.text,
+        reply_markup=prepared.reply_markup,
     )
     telegram_sent = brief.ok
     if brief.ok and brief.message_id is not None:
@@ -223,6 +244,8 @@ def handoff_node(state: AgentState) -> dict:
             "telegram_message_id": brief.message_id,
             "lead_logged": bool(user_email),
             "user_email": user_email,
+            "category": prepared.category,
+            "temperature": prepared.temperature,
         }
     ]
 
@@ -259,22 +282,33 @@ def respond_node(state: AgentState) -> dict:
         tg_ok = tool_out.get("telegram_sent")
 
         logger.info("node respond: template (handoff), no Gemini")
-        if email:
+        topic = {
+            "hiring": "the role, salary and terms",
+            "pricing": "rates and a quote",
+            "project": "scope, timeline and cost for your project",
+            "partnership": "whether he can take this on",
+            "support": "this problem",
+        }.get(tool_out.get("category") or "", "this")
+        owner = settings.owner_name
+        if email and tg_ok:
             response_text = (
-                f"I'm {settings.assistant_name} — salary and full-time terms are for "
-                f"{settings.owner_name} to answer.\n\n"
-                f"I still have **{email}** from earlier in this chat — he'll follow up there.\n\n"
-                f"I pinged him on Telegram with this question (that alert goes to **his** account, not yours — "
-                f"so you won't see a new Telegram from the bot on your side). "
-                f"When he **replies in that Telegram thread**, his reply is emailed to **{email}**."
-                f"{' The bot accepted the alert.' if tg_ok else ' Telegram delivery failed on our side; he may still see the lead in the dashboard.'}"
+                f"That's one for {owner} himself: {topic}. I've sent him your question with the context of this "
+                f"chat, and he'll reply by email to **{email}**, usually within a day."
+            )
+        elif email:
+            response_text = (
+                f"That's one for {owner} himself: {topic}. I couldn't reach him just now, so please also send it "
+                f"through {settings.portfolio_url}/contact — I have **{email}** on file for his reply."
+            )
+        elif tg_ok:
+            response_text = (
+                f"That's one for {owner} himself: {topic}. I've sent him your question. "
+                f"**What email should he reply to?** Send it in your next message and I'll attach it."
             )
         else:
             response_text = (
-                f"I'm {settings.assistant_name} — this one needs {settings.owner_name} directly "
-                f"(rates, scope, contracts). "
-                f"{'I sent him a Telegram alert.' if tg_ok else 'Telegram delivery failed — use the site or leave your email.'} "
-                f"Drop your email in your next message if you haven’t shared one yet."
+                f"That's one for {owner} himself: {topic}. I couldn't reach him just now. "
+                f"Please use {settings.portfolio_url}/contact, or leave your email here."
             )
         return {
             "response": response_text,
@@ -344,6 +378,7 @@ def respond_node(state: AgentState) -> dict:
             context=context or "No relevant context found.",
             history=history,
         )
+        + (AI_AGENT_STYLE if state.get("visitor_kind") == "ai_agent" else "")
         + f"\n\nUSER QUESTION: {state['user_query']}"
     )
 
