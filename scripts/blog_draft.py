@@ -1,5 +1,7 @@
 """
-Generate one blog draft via Gemini + Supabase (GitHub Actions / local).
+Generate one blog draft via Gemini + Supabase (manual / local).
+
+In production the API's built-in scheduler runs this pipeline (src/scheduler).
 
 Requires env:
   GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY

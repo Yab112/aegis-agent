@@ -13,7 +13,7 @@
 | **Intelligent Q&A** | Answers questions about Yabibal's projects, skills, and background using RAG over a curated knowledge base |
 | **Calendar & Meet booking** | Checks live Google Calendar availability and generates confirmed Google Meet links |
 | **Telegram handoff** | Sends a lead briefing to your Telegram; **reply in-thread** to email the visitor (Gmail) when their email was captured |
-| **Auto blog drafts** | Scheduled GitHub Action proposes a topic, writes a full Markdown post with Gemini, and inserts it into Supabase as a draft |
+| **Auto blog posts** | A built-in, Supabase-backed scheduler finds ideas, writes a full Markdown post with Gemini, generates a cover and publishes it — no external cron |
 | **Lead CRM** | Logs every visitor email, intent, and conversation turn to Supabase |
 | **Session memory** | Remembers context within a conversation so follow-up questions work naturally |
 | **Confidence-gated answers** | If retrieval confidence is below 0.72, the agent admits uncertainty instead of hallucinating |
@@ -61,7 +61,7 @@ The router classifies every message into one of three intents using Gemini (with
 | Leads / Sessions / Blog | Supabase PostgreSQL | Free tier |
 | Calendar + Meet | Google Calendar API + Gmail API | Free |
 | Handoff | Telegram Bot API | Free (bots) |
-| Automation | GitHub Actions (2 workflows) | Free (2 000 min/mo) |
+| Automation | In-process scheduler (state in Supabase) | Free |
 | Frontend | Next.js on Vercel | Free tier |
 
 **Total monthly cost: $0**
@@ -116,8 +116,7 @@ aegis-agent/
 │   └── chat.html             # Browser chat tester (GET /chat-ui)
 ├── .github/
 │   └── workflows/
-│       ├── ingest.yml        # Auto re-ingest when docs/knowledge_base/** changes
-│       └── blog-draft.yml    # Scheduled blog draft generation (every 2 days, 09:00 UTC)
+│       └── ingest.yml        # Re-ingest when docs/knowledge_base/** changes
 ├── .env.example
 ├── requirements.txt
 ├── Dockerfile
@@ -160,23 +159,20 @@ push to docs/knowledge_base/** ──► checkout → install → python scripts
 
 Required secrets: `GEMINI_API_KEY`, `HF_API_TOKEN`, `EMBEDDING_MODEL`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
 
-### `blog-draft.yml` — Scheduled blog draft generation
+## Blog automation (built-in scheduler)
 
-Runs every 5 days at 09:00 UTC (or on demand). Uses Gemini to propose a topic, write a full article, generate/upload a cover image, and insert into Supabase.
+Blog ideas, drafting and publishing run **inside the API process** — no GitHub Actions. Schedules are cron
+expressions in env vars, state and run history live in Supabase, missed runs are caught up after a restart or
+sleep, and failures retry with backoff and alert you on Telegram.
 
 ```
-cron: "0 9 */5 * *" ──► checkout → install → python scripts/blog_draft.py
+blog_ideas   0 10 * * 0,3 ──► HN/GitHub/Dev.to/Reddit/SO → Gemini scoring → blog_ideas
+blog_draft   0 9 */5 * *  ──► idea → Gemini post + cover → Cloudinary → blog_posts
+blog_publish 0 12 * * *   ──► review → published
 ```
 
-Required secrets: all of the above plus `GEMINI_MODEL`, `OWNER_NAME`, `PORTFOLIO_URL`, `BLOG_DEFAULT_OG_IMAGE`, `BLOG_IMAGE_MODEL`, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`, `CLOUDINARY_FOLDER`, optional `BLOG_PUBLISH_WEBHOOK_URL`, optional `BLOG_PUBLISH_WEBHOOK_SECRET`
-
-### `blog-publish.yml` — Publish reviewed posts
-
-Runs daily at 12:00 UTC (or on demand). Promotes `review` posts to `published` and emits optional publish webhook events.
-
-> Want more automation? Reach out at [yabibal.site](https://yabibal.site) and I'll add it.
-
----
+Setup, env vars and the control endpoints (`/internal/scheduler/*`, `/automation/status`) are documented in
+[docs/blog-pipeline.md](docs/blog-pipeline.md#3-scheduler-runs-inside-the-api).
 
 ## Quick start
 
