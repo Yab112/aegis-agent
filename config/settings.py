@@ -123,6 +123,33 @@ class Settings(BaseSettings):
             return v.strip()
         return v
 
+    # ── In-process scheduler (blog automation; replaces GitHub Actions cron) ──
+    # State is stored in Supabase (scripts/supabase_scheduler.sql) so missed runs
+    # are caught up after a restart or free-tier sleep.
+    scheduler_enabled: bool = True
+    scheduler_tick_seconds: int = 60
+    # 5-field cron expressions, evaluated in UTC.
+    scheduler_blog_ideas_cron: str = "0 10 * * 0,3"
+    scheduler_blog_draft_cron: str = "0 9 */5 * *"
+    scheduler_blog_publish_cron: str = "0 12 * * *"
+    # draft | review | published — status for posts written by the scheduled draft job.
+    scheduler_blog_draft_status: str = "published"
+    # Failed scheduled runs retry with exponential backoff, then give up until the next slot.
+    scheduler_max_attempts: int = 3
+    scheduler_retry_backoff_minutes: int = 10
+    # First boot with an empty scheduler_jobs table: false = wait for the next slot,
+    # true = immediately run the most recent slot of every job.
+    scheduler_run_missed_on_first_boot: bool = False
+    # Self-ping so free-tier hosts do not sleep through a schedule. Needs a public URL:
+    # PUBLIC_BASE_URL, or the host-provided RENDER_EXTERNAL_URL / KOYEB_PUBLIC_DOMAIN.
+    scheduler_keep_awake: bool = True
+    scheduler_keep_awake_minutes: int = 10
+    public_base_url: str | None = None
+    # Re-ingest docs/knowledge_base/** when its content differs from the last ingested version.
+    scheduler_kb_ingest_on_change: bool = True
+    # Telegram message to the owner when a scheduled job publishes or gives up.
+    scheduler_notify_telegram: bool = True
+
     # Owner
     owner_name: str = "Yabibal"
     owner_role: str = "Full-Stack & AI Engineer"

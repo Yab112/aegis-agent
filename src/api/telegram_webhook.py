@@ -51,6 +51,11 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
     except Exception:
         raise HTTPException(status_code=400, detail="Expected JSON body")
 
+    callback = body.get("callback_query")
+    if isinstance(callback, dict):
+        _handle_handoff_button(callback, str(settings.telegram_chat_id).strip())
+        return {"ok": True}
+
     msg = body.get("message") or body.get("edited_message")
     if not isinstance(msg, dict):
         return {"ok": True}
@@ -198,3 +203,46 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
         )
 
     return {"ok": True}
+
+
+def _handle_handoff_button(callback: dict, owner_chat: str) -> None:
+    """Inline buttons under a handoff alert: suggest a reply, or mark it handled."""
+    from datetime import datetime, timezone
+
+    from src.tools.handoff_brief import reply_draft
+    from src.tools.handoff_tool import telegram_call
+
+    settings = get_settings()
+    cb_id = callback.get("id")
+    data = str(callback.get("data") or "")
+    message = callback.get("message") or {}
+    chat_id = str((message.get("chat") or {}).get("id") or "").strip()
+    message_id = message.get("message_id")
+    if chat_id != owner_chat or not isinstance(message_id, int):
+        logger.info("telegram webhook: ignored callback from chat_id=%s", chat_id)
+        return
+
+    if data.startswith("ho:draft:"):
+        draft = reply_draft(data.split(":", 2)[2], settings.owner_name, settings.portfolio_url)
+        send_telegram_thread_reply(
+            chat_id=chat_id,
+            reply_to_message_id=message_id,
+            text=(
+                "Draft, not sent. Copy it, edit it, then send it as a reply to the alert above "
+                "to email the visitor:\n\n" + draft
+            ),
+        )
+        telegram_call("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Draft posted below"})
+    elif data == "ho:done":
+        stamp = datetime.now(timezone.utc).strftime("%d %b %H:%M UTC")
+        telegram_call(
+            "editMessageReplyMarkup",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "reply_markup": {"inline_keyboard": [[{"text": f"✅ Handled {stamp}", "callback_data": "ho:noop"}]]},
+            },
+        )
+        telegram_call("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Marked handled"})
+    else:
+        telegram_call("answerCallbackQuery", {"callback_query_id": cb_id})

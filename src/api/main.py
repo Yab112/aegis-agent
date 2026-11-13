@@ -17,8 +17,11 @@ from src.api.blog_internal import router as blog_internal_router
 from src.api.blog_routes import router as blog_public_router
 from src.api.health_routes import router as health_router
 from src.api.routes import router
+from src.api.scheduler_routes import internal_router as scheduler_internal_router
+from src.api.scheduler_routes import public_router as automation_public_router
 from src.api.rate_limit import AegisRateLimitMiddleware
 from src.api.telegram_webhook import router as telegram_router
+from src.scheduler.service import get_scheduler
 
 settings = get_settings()
 configure_logging(settings)
@@ -33,7 +36,19 @@ async def lifespan(app: FastAPI):
         "[aegis] Ready. Chat test UI: GET /chat-ui  (file: public/chat.html). "
         "Access log: aegis-access.log in project root."
     )
+    scheduler = None
+    if get_settings().scheduler_enabled:
+        try:
+            scheduler = get_scheduler()
+            scheduler.start()
+        except Exception:
+            logging.getLogger("aegis").exception("[aegis] scheduler failed to start")
+            scheduler = None
+    else:
+        logging.getLogger("aegis").info("[aegis] scheduler disabled (SCHEDULER_ENABLED=false)")
     yield
+    if scheduler is not None:
+        await scheduler.stop()
 
 
 app = FastAPI(
@@ -65,6 +80,8 @@ app.include_router(blog_public_router)
 app.include_router(blog_internal_router)
 app.include_router(health_router)
 app.include_router(telegram_router)
+app.include_router(scheduler_internal_router)
+app.include_router(automation_public_router)
 
 # Versioned aliases for forward-compatible clients.
 app.include_router(router, prefix="/v1")
@@ -72,6 +89,8 @@ app.include_router(blog_public_router, prefix="/v1")
 app.include_router(blog_internal_router, prefix="/v1")
 app.include_router(health_router, prefix="/v1")
 app.include_router(telegram_router, prefix="/v1")
+app.include_router(scheduler_internal_router, prefix="/v1")
+app.include_router(automation_public_router, prefix="/v1")
 
 _PUBLIC = Path(__file__).resolve().parents[2] / "public"
 _CHAT_HTML = _PUBLIC / "chat.html"
@@ -95,6 +114,11 @@ def root():
         "chat_api": "POST /chat",
         "blog_api": "GET /blog, GET /blog/topics, GET /blog/search, GET /blog/{slug}",
         "blog_internal": "POST /internal/blog/generate-draft (auth required)",
+        "automation": "GET /automation/status (public pipeline status)",
+        "scheduler_internal": (
+            "GET /internal/scheduler/status, POST /internal/scheduler/jobs/{name}/run|pause|resume, "
+            "POST /internal/scheduler/tick (auth required)"
+        ),
         "telegram_webhook": "POST /v1/telegram/webhook (Telegram setWebhook → owner reply → visitor email)",
         "v1_aliases": "GET /v1/health, POST /v1/chat, GET /v1/blog, POST /v1/telegram/webhook",
     }
