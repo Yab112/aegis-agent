@@ -12,6 +12,8 @@ aegis-access.log
 .env.*
 !.env.example
 *.md
+# The knowledge base is runtime data: the API ingests it on boot.
+!docs/knowledge_base/**
 .pytest_cache
 .mypy_cache
 .ruff_cache
