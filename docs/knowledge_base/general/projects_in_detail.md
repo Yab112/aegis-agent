@@ -20,3 +20,12 @@ An online art marketplace: a storefront and a NestJS and Prisma backend covering
 
 ## Pest Leads Pro (client work, March to August 2025)
 Dynamic SEO feeding a lead marketplace for a US company. One page template becomes a marketing page for every country, city and pest, filled from the database; n8n agents generate that data and validate it. A visitor's enquiry is sold to a vendor, the price is taken from the vendor's wallet, the visitor is redirected and the vendor notified. If the vendor does not make contact the lead is redirected to another vendor, and a bad lead is refunded. Scheduled agents handle SEO, performance, audit and reporting, and a digital PR agent turns pest-incident spikes into press pages and outreach.
+
+## Products Yabibal founded
+Yabibal is the founder of three products that are going to market in November 2026: BillShare, Feedlane and Compliance Navigator. He designed and built each one end to end.
+
+## Feedlane (own product, founder)
+Feedlane helps a business know what its customers really think: branded feedback forms, QR codes, AI insights and response management. A business creates a form from a category template, from its own paper questionnaire uploaded as a PDF, or from a description in English or Amharic; tests it; shares it by link, branded QR code, print template or embed; and works the responses in an inbox with status, assignment, alerts, AI categories and summaries, reports and export. It is built first for hotels, guesthouses, restaurants and cafes in Addis Ababa. The business chooses where its data lives: the cloud, a webhook to its own API, its own database, or self-hosted. It has three front ends (business dashboard, staff admin, public form) on a FastAPI backend. For pricing or a pilot, contact Yabibal directly.
+
+## CourseBox (own open-source tool)
+CourseBox turns a downloaded course zip into a Coursera-style learning space. Drop in an MIT OpenCourseWare export, a Udemy-style download or any folder of videos, PDFs and notes; it works out the structure (units, sessions, lectures, problem sets paired with solutions) and gives a course player with progress tracking. The zip is unpacked in a Web Worker and stored in the browser, so reading needs no account and no server. It has viewers for PDF, video with captions, Markdown, code and Jupyter notebooks. An optional free account saves courses and syncs progress across devices. Source: https://github.com/Yab112/coursebox
