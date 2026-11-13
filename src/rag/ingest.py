@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -93,6 +94,14 @@ def run_kb_ingest(supabase_url: str, supabase_service_key: str, base: Path = KNO
     wanted = {c["id"] for c in chunks}
     new = [c for c in chunks if c["id"] not in existing]
     stale = sorted(existing - wanted)
+
+    # A build that lost most of the docs (e.g. an ignore rule) must not gut the store.
+    # The very first run (no shared ids yet) is exempt: it replaces legacy random-id rows.
+    if (existing & wanted) and len(stale) > len(wanted) and os.getenv("KB_INGEST_ALLOW_LARGE_PRUNE", "").lower() not in ("1", "true", "yes"):
+        raise RuntimeError(
+            f"Refusing to remove {len(stale)} rows while only {len(wanted)} chunks remain. "
+            "Check that docs/knowledge_base is complete in this build, or set KB_INGEST_ALLOW_LARGE_PRUNE=true."
+        )
 
     if new:
         embeddings = embed_texts([c["content"] for c in new])

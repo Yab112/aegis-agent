@@ -451,3 +451,29 @@ def test_kb_ingest_refuses_to_wipe_store_when_docs_missing(tmp_path, monkeypatch
 
     with pytest.raises(RuntimeError):
         ingest.run_kb_ingest("u", "k", base=tmp_path / "missing")
+
+
+def test_kb_ingest_refuses_a_prune_larger_than_what_remains(tmp_path, monkeypatch):
+    import supabase
+
+    import src.rag.embedder as embedder
+    from src.rag import ingest
+
+    kb = tmp_path / "kb" / "general"
+    kb.mkdir(parents=True)
+    for i in range(4):
+        (kb / f"doc{i}.md").write_text(f"# Doc {i}\n\nBody number {i}.\n")
+    docs = _Docs([])
+    monkeypatch.setattr(supabase, "create_client", lambda *_a: docs)
+    monkeypatch.setattr(embedder, "embed_texts", lambda texts: [[0.0]] * len(texts))
+    ingest.run_kb_ingest("u", "k", base=kb.parent)
+    before = dict(docs.rows)
+
+    for i in range(1, 4):  # a broken build ships only one of the four docs
+        (kb / f"doc{i}.md").unlink()
+    with pytest.raises(RuntimeError, match="Refusing to remove"):
+        ingest.run_kb_ingest("u", "k", base=kb.parent)
+    assert docs.rows == before
+
+    monkeypatch.setenv("KB_INGEST_ALLOW_LARGE_PRUNE", "true")
+    assert ingest.run_kb_ingest("u", "k", base=kb.parent)["removed"] == len(before) - 1
