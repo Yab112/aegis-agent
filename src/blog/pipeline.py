@@ -105,6 +105,8 @@ class BlogPipelineConfig:
     cloudinary_folder: str = "aegis/blog"
     blog_generate_images: bool = True
     pipeline_run_key: str | None = None
+    # When set (draft | review | published) it wins over BLOG_POST_STATUS_AFTER_WRITE.
+    post_status_override: str | None = None
 
     @classmethod
     def from_full_settings(cls, settings: Any) -> BlogPipelineConfig:
@@ -127,7 +129,7 @@ class BlogPipelineConfig:
 
     @classmethod
     def from_minimal_env(cls) -> BlogPipelineConfig:
-        """GitHub Actions / CI: only required keys in the environment."""
+        """Standalone scripts: only required keys in the environment."""
         key = os.environ.get("GEMINI_API_KEY", "").strip()
         url = os.environ.get("SUPABASE_URL", "").strip()
         svc = os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
@@ -491,7 +493,7 @@ def _unique_slug(client: Client, base_slug: str) -> str:
     raise RuntimeError("Could not allocate unique slug")
 
 
-def _post_status_after_write() -> tuple[str, str | None]:
+def _post_status_after_write(override: str | None = None) -> tuple[str, str | None]:
     """
     BLOG_POST_STATUS_AFTER_WRITE: draft | review | published (default draft).
 
@@ -499,7 +501,7 @@ def _post_status_after_write() -> tuple[str, str | None]:
     - review: ready for blog-publish.yml (review → published) with no human edit.
     - published: live immediately (sets published_at); public API shows the post.
     """
-    raw = os.environ.get("BLOG_POST_STATUS_AFTER_WRITE", "draft").strip().lower()
+    raw = (override or os.environ.get("BLOG_POST_STATUS_AFTER_WRITE", "draft")).strip().lower()
     if raw in ("published", "publish", "live"):
         return "published", datetime.now(timezone.utc).isoformat()
     if raw == "review":
@@ -957,7 +959,7 @@ def run_blog_draft_once(cfg: BlogPipelineConfig) -> dict[str, Any]:
                 idea_id=idea_id,
             )
 
-    post_status, published_at = _post_status_after_write()
+    post_status, published_at = _post_status_after_write(cfg.post_status_override)
     _, _, _, _, block_on_quality_fail, _ = _quality_gate_settings()
     if not quality_ok:
         logger.warning(
