@@ -93,9 +93,10 @@ def _run_kb_ingest(ctx: JobContext) -> dict[str, Any]:
 
 
 def _kb_fingerprint() -> str:
-    from src.rag.ingest import kb_fingerprint
+    from src.rag.ingest import _embedding_tag, kb_fingerprint
 
-    return kb_fingerprint()
+    tag = _embedding_tag()
+    return kb_fingerprint() + (f"+{tag}" if tag else "")
 
 
 def build_jobs(settings: Any) -> dict[str, JobDef]:

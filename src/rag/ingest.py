@@ -42,15 +42,31 @@ def kb_fingerprint(base: Path = KNOWLEDGE_BASE_DIR) -> str:
     return h.hexdigest()
 
 
-def chunk_id(rel_path: str, occurrence: int, content: str) -> str:
+def _embedding_tag() -> str:
+    """Empty for the original provider (keeps existing ids); otherwise names the provider and model."""
+    try:
+        from config.settings import get_settings
+
+        s = get_settings()
+        provider = (s.embedding_provider or "huggingface").strip().lower()
+        return "" if provider == "huggingface" else f"{provider}:{s.gemini_embedding_model}"
+    except Exception:
+        return ""
+
+
+def chunk_id(rel_path: str, occurrence: int, content: str, embedding_tag: str = "") -> str:
+    # The id covers the embedding model too: change provider and every chunk gets a new id,
+    # so it is re-embedded and the vectors from the old model are pruned.
     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    return str(uuid.uuid5(_NAMESPACE, f"{rel_path}#{occurrence}#{digest}"))
+    suffix = f"#{embedding_tag}" if embedding_tag else ""
+    return str(uuid.uuid5(_NAMESPACE, f"{rel_path}#{occurrence}#{digest}{suffix}"))
 
 
 def collect_chunks(base: Path = KNOWLEDGE_BASE_DIR) -> list[dict[str, Any]]:
     from src.rag.chunkers import chunk_document
 
     out: list[dict[str, Any]] = []
+    tag = _embedding_tag()
     for path in kb_files(base):
         rel = path.relative_to(base).as_posix()
         project = rel.split("/", 1)[0] if "/" in rel else None
@@ -64,7 +80,7 @@ def collect_chunks(base: Path = KNOWLEDGE_BASE_DIR) -> list[dict[str, Any]]:
             content = chunk["content"]
             n = seen.get(content, 0)  # identical chunks in one file still get distinct ids
             seen[content] = n + 1
-            out.append({"id": chunk_id(rel, n, content), "content": content, "metadata": chunk["metadata"]})
+            out.append({"id": chunk_id(rel, n, content, tag), "content": content, "metadata": chunk["metadata"]})
     return out
 
 
@@ -73,7 +89,8 @@ def run_kb_ingest(supabase_url: str, supabase_service_key: str, base: Path = KNO
 
     from src.rag.embedder import embed_texts
 
-    fingerprint = kb_fingerprint(base)
+    # Switching embedding provider must trigger a re-ingest even if the docs did not change.
+    fingerprint = kb_fingerprint(base) + (f"+{_embedding_tag()}" if _embedding_tag() else "")
     chunks = collect_chunks(base)
     if not chunks:
         # Never wipe the vector store because the docs folder is missing from a build.
