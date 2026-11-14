@@ -76,6 +76,13 @@ def world():
 # ──────────────────────────────────────────────────────────────────────────────
 
 class TestEmbedder:
+    @pytest.fixture(autouse=True)
+    def _hugging_face_provider(self, monkeypatch):
+        """These tests cover the Hugging Face path; Gemini is the default provider."""
+        import src.rag.embedder as embedder
+
+        monkeypatch.setattr(embedder, "_use_gemini", lambda: False)
+
     @patch("src.rag.embedder._embed_batch")
     def test_embed_texts_returns_correct_count(self, mock_batch):
         mock_batch.return_value = [[0.1] * 384] * 5

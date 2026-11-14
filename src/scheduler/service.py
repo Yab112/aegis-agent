@@ -52,6 +52,7 @@ class Scheduler:
         self._crons = {name: CronSpec.parse(job.cron) for name, job in jobs.items() if job.cron}
         self._fingerprints: dict[str, str] = {}
         self._ingested: dict[str, str] = {}
+        self._ran_stateless: set[str] = set()
         self._tasks: list[asyncio.Task[Any]] = []
         self.storage_error: str | None = None
         self.started_at: datetime | None = None
@@ -134,6 +135,17 @@ class Scheduler:
                         exc,
                     )
                 self.storage_error = str(exc)
+                # Change-driven jobs are idempotent, so without state storage run each
+                # once per process rather than never: the knowledge base still syncs.
+                job = self.jobs[name]
+                if job.fingerprint and name not in self._ran_stateless:
+                    self._ran_stateless.add(name)
+                    try:
+                        result = job.run(JobContext(settings=self.settings, trigger="change", slot=None, run_key=f"stateless-{name}"))
+                        logger.info("scheduler: job=%s ran without state storage: %s", name, result)
+                        self._announce(job, trigger="change", status="success", result=result, error=None, gave_up=False)
+                    except Exception:
+                        logger.exception("scheduler: job=%s failed (no state storage)", name)
                 continue
             if slot is not None:
                 out.append(self.run_job(name, trigger="schedule", slot=slot))

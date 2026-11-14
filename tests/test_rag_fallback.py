@@ -37,3 +37,60 @@ def test_changing_embedding_provider_changes_every_chunk_id():
     a = chunk_id("general/about.md", 0, "text")
     assert a == chunk_id("general/about.md", 0, "text", "")  # default provider keeps existing ids
     assert a != chunk_id("general/about.md", 0, "text", "gemini:models/gemini-embedding-001")
+
+
+def test_default_provider_is_gemini_and_needs_no_hugging_face_token(monkeypatch):
+    from config.settings import Settings
+
+    monkeypatch.delenv("HF_API_TOKEN", raising=False)
+    monkeypatch.delenv("EMBEDDING_PROVIDER", raising=False)
+    s = Settings(_env_file=None)
+    assert s.embedding_provider == "gemini" and s.hf_api_token == ""
+
+
+def test_vector_search_only_matches_rows_from_the_current_model_else_keyword(monkeypatch):
+    import src.rag.ingest as ingest
+
+    seen = {}
+
+    class _Rpc:
+        def execute(self):
+            return type("R", (), {"data": []})()  # nothing embedded by this model yet
+
+    class _Client:
+        def rpc(self, name, params):
+            seen.update(params)
+            return _Rpc()
+
+    monkeypatch.setattr(ingest, "_embedding_tag", lambda: "gemini:models/gemini-embedding-001")
+    monkeypatch.setattr(retriever, "embed_query", lambda q: [0.0] * 384)
+    monkeypatch.setattr(retriever, "get_client", lambda: _Client())
+
+    chunks, confidence = retriever.retrieve("How does BillShare settle with Telebirr?", top_k=3)
+    assert seen["filter"] == {"embedding": "gemini:models/gemini-embedding-001"}
+    assert chunks and confidence > 0  # answered by keyword search, not by mismatched vectors
+
+
+def test_knowledge_sync_runs_once_even_without_scheduler_tables():
+    from types import SimpleNamespace
+
+    from src.scheduler.jobs import JobDef
+    from src.scheduler.service import Scheduler
+    from src.scheduler.store import InMemorySchedulerStore
+
+    store = InMemorySchedulerStore()
+
+    def missing(_name):
+        raise RuntimeError("relation scheduler_jobs does not exist")
+
+    store.get_job = missing
+    calls = []
+    job = JobDef(name="kb", title="KB", description="d", cron=None,
+                 run=lambda ctx: calls.append(ctx.run_key) or {"fingerprint": "v1", "embedded": 3, "removed": 0, "chunks": 3},
+                 fingerprint=lambda: "v1")
+    settings = SimpleNamespace(scheduler_run_missed_on_first_boot=False, scheduler_max_attempts=3,
+                               scheduler_retry_backoff_minutes=10, portfolio_url="https://x")
+    sched = Scheduler(store, {"kb": job}, settings)
+    sched.tick()
+    sched.tick()
+    assert calls == ["stateless-kb"]

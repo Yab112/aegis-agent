@@ -32,12 +32,13 @@ class Settings(BaseSettings):
         return v
 
     # Embeddings
-    hf_api_token: str
+    # Only needed when EMBEDDING_PROVIDER=huggingface.
+    hf_api_token: str = ""
     embedding_model: str = "BAAI/bge-small-en-v1.5"
     # "huggingface" (BGE through HF Inference Providers) or "gemini" (Google's embedding
     # model on the same GEMINI_API_KEY the chat already uses). Switching provider changes
     # every vector, so the knowledge base re-embeds itself on the next boot.
-    embedding_provider: str = "huggingface"
+    embedding_provider: str = "gemini"
     gemini_embedding_model: str = "models/gemini-embedding-001"
     embedding_dim: int = 384
 
