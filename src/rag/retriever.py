@@ -44,6 +44,22 @@ def retrieve(
         chunks: list of {"content": str, "metadata": dict, "similarity": float}
         confidence_score: similarity of the top result (0.0–1.0)
     """
+    try:
+        return _vector_retrieve(query, top_k, metadata_filter)
+    except Exception as exc:
+        # Embedding provider out of quota, down, or misconfigured: keep answering
+        # from the same documents by keyword instead of failing the whole chat.
+        logger.error("rag: vector retrieval failed (%s); using keyword fallback", str(exc)[:300])
+        from src.rag.lexical import lexical_retrieve
+
+        return lexical_retrieve(query, top_k=top_k, metadata_filter=metadata_filter)
+
+
+def _vector_retrieve(
+    query: str,
+    top_k: int,
+    metadata_filter: dict | None,
+) -> tuple[list[dict], float]:
     query_embedding = embed_query(query)
     client = get_client()
 

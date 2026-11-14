@@ -93,11 +93,37 @@ def _embed_batch(texts: list[str]) -> list[list[float]]:
     return _embed_batch_once(texts)
 
 
+def _use_gemini() -> bool:
+    return (get_settings().embedding_provider or "").strip().lower() == "gemini"
+
+
+def _gemini_embed(texts: list[str], task_type: str) -> list[list[float]]:
+    """Embed with Google's model, truncated to the store's dimension (embedding_dim)."""
+    import google.generativeai as genai
+
+    s = get_settings()
+    genai.configure(api_key=s.gemini_api_key)
+    out: list[list[float]] = []
+    for i in range(0, len(texts), 50):
+        res = genai.embed_content(
+            model=s.gemini_embedding_model,
+            content=texts[i : i + 50],
+            task_type=task_type,
+            output_dimensionality=s.embedding_dim,
+        )
+        vectors = res["embedding"]
+        out.extend(vectors if vectors and isinstance(vectors[0], list) else [vectors])
+    return out
+
+
 def embed_texts(texts: list[str]) -> list[list[float]]:
     """
     Embed a list of texts in batches of BATCH_SIZE.
     Returns a flat list of 384-dim vectors in the same order as input.
     """
+    if _use_gemini():
+        return _gemini_embed(texts, "retrieval_document")
+
     all_embeddings: list[list[float]] = []
 
     for i in range(0, len(texts), BATCH_SIZE):
@@ -121,5 +147,7 @@ def embed_query(query: str) -> list[float]:
         "rag: HuggingFace embeddings POST model=%s",
         settings.embedding_model,
     )
+    if _use_gemini():
+        return _gemini_embed([query], "retrieval_query")[0]
     prefixed = f"Represent this sentence for searching relevant passages: {query}"
     return embed_texts([prefixed])[0]
