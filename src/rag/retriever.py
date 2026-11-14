@@ -45,7 +45,13 @@ def retrieve(
         confidence_score: similarity of the top result (0.0–1.0)
     """
     try:
-        return _vector_retrieve(query, top_k, metadata_filter)
+        chunks, confidence = _vector_retrieve(query, top_k, metadata_filter)
+        if chunks:
+            return chunks, confidence
+        logger.info("rag: no vector matches; using keyword fallback")
+        from src.rag.lexical import lexical_retrieve
+
+        return lexical_retrieve(query, top_k=top_k, metadata_filter=metadata_filter)
     except Exception as exc:
         # Embedding provider out of quota, down, or misconfigured: keep answering
         # from the same documents by keyword instead of failing the whole chat.
@@ -60,6 +66,15 @@ def _vector_retrieve(
     top_k: int,
     metadata_filter: dict | None,
 ) -> tuple[list[dict], float]:
+    from src.rag.ingest import _embedding_tag
+
+    # Vectors from different models are not comparable. Search only rows embedded by the
+    # current model; until the knowledge base has been re-embedded there are none, and
+    # the caller falls back to keyword search instead of matching against the wrong space.
+    tag = _embedding_tag()
+    if tag:
+        metadata_filter = {**(metadata_filter or {}), "embedding": tag}
+
     query_embedding = embed_query(query)
     client = get_client()
 
