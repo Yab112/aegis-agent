@@ -105,12 +105,22 @@ def _gemini_embed(texts: list[str], task_type: str) -> list[list[float]]:
     genai.configure(api_key=s.gemini_api_key)
     out: list[list[float]] = []
     for i in range(0, len(texts), 50):
-        res = genai.embed_content(
-            model=s.gemini_embedding_model,
-            content=texts[i : i + 50],
-            task_type=task_type,
-            output_dimensionality=s.embedding_dim,
-        )
+        batch = texts[i : i + 50]
+        for attempt in range(1, 5):
+            try:
+                res = genai.embed_content(
+                    model=s.gemini_embedding_model,
+                    content=batch,
+                    task_type=task_type,
+                    output_dimensionality=s.embedding_dim,
+                )
+                break
+            except Exception as exc:
+                # Free-tier rate limit: wait and retry; anything else is a real failure.
+                quota = "429" in str(exc) or "ResourceExhausted" in str(exc) or "quota" in str(exc).lower()
+                if not quota or attempt == 4:
+                    raise
+                time.sleep(15 * attempt)
         vectors = res["embedding"]
         out.extend(vectors if vectors and isinstance(vectors[0], list) else [vectors])
     return out

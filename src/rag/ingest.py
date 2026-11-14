@@ -80,7 +80,11 @@ def collect_chunks(base: Path = KNOWLEDGE_BASE_DIR) -> list[dict[str, Any]]:
             content = chunk["content"]
             n = seen.get(content, 0)  # identical chunks in one file still get distinct ids
             seen[content] = n + 1
-            out.append({"id": chunk_id(rel, n, content, tag), "content": content, "metadata": chunk["metadata"]})
+            metadata = dict(chunk["metadata"])
+            if tag:
+                # Lets retrieval ask only for vectors made by the model it queries with.
+                metadata["embedding"] = tag
+            out.append({"id": chunk_id(rel, n, content, tag), "content": content, "metadata": metadata})
     return out
 
 
