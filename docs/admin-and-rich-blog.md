@@ -42,3 +42,15 @@ Public: `GET /projects` (admin-managed project overrides for the portfolio).
 `/publish <slug>`, `/unpublish <slug>`, `/stats`, `/jobs`, `/run <job>`, `/admin`, `/help`.
 When a post is written the bot sends its numbers (words, sources, charts, what the checks
 removed) with Publish / Discard / Edit-in-admin buttons.
+
+## 5. People, Email and Data (admin)
+
+- **People** (`GET /admin/people`, `/admin/people/{email}`): one row per email address, merged from leads,
+  handoffs, chat sessions and the mail you sent.
+- **Email** (`/admin/email/*`): `templates` (CRUD), `preview`, `send`, `sent`, `status`.
+  The body uses a small Markdown subset plus `[[Button|url]]` and `{{first_name}}`, `{{owner_name}}`,
+  `{{site}}`, `{{email}}`; `src/mailer/layout.py` wraps it in the fixed branded layout.
+  Sending uses Resend when `RESEND_API_KEY` and `EMAIL_FROM` are set on the API host, else Gmail.
+  Inbox and Telegram replies use the same layout and provider.
+- **Data** (`GET /admin/data`, `/admin/data/{table}`): read-only rows of an allow-listed set of tables.
+- SQL: `scripts/supabase_email.sql`.
