@@ -9,34 +9,16 @@ Register with Telegram::
 from __future__ import annotations
 
 import logging
-import re
-import time
 
 from fastapi import APIRouter, HTTPException, Request
 
 from config.settings import get_settings
-from src.tools.calendar_tool import CalendarOAuthError, send_gmail_multipart
 from src.tools.handoff_tool import send_telegram_thread_reply
 from src.tools.lead_tool import fetch_handoff_telegram_alert
-from src.email_templates import (
-    build_branded_visitor_email_html,
-    build_branded_visitor_email_plain,
-    polish_owner_reply_for_visitor_email,
-)
 
 logger = logging.getLogger("aegis.telegram_webhook")
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
-
-_EMAILISH = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-
-def _valid_visitor_email(raw: str | None) -> bool:
-    if not raw or not isinstance(raw, str):
-        return False
-    s = raw.strip()
-    return bool(_EMAILISH.match(s)) and len(s) < 254
-
 
 @router.post("/webhook")
 async def telegram_webhook(request: Request) -> dict[str, bool]:
@@ -53,7 +35,7 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
 
     callback = body.get("callback_query")
     if isinstance(callback, dict):
-        _handle_handoff_button(callback, str(settings.telegram_chat_id).strip())
+        _handle_button(callback, str(settings.telegram_chat_id).strip())
         return {"ok": True}
 
     msg = body.get("message") or body.get("edited_message")
@@ -81,13 +63,17 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
     if not isinstance(reply_to, dict):
         # Owner typed in chat but did not use Reply on the lead alert — we cannot map to a visitor.
         loose = (msg.get("text") or msg.get("caption") or "").strip()
-        if loose and not loose.startswith("/"):
+        if loose.startswith("/"):
+            from src.telegram_bot.commands import handle_command
+
+            handle_command(settings, owner_chat, loose)
+        elif loose:
             send_telegram_thread_reply(
                 chat_id=owner_chat,
                 reply_to_message_id=incoming_mid,
                 text=(
-                    "To email the visitor: open the Aegis-Agent Lead Alert message, "
-                    "use Reply there (thread), then send your text — not as a new standalone message."
+                    "To email a visitor, reply to their alert bubble, or use /reply <id> <text> "
+                    "(ids are in /inbox). /help lists everything else I can do."
                 ),
             )
         return {"ok": True}
@@ -105,104 +91,52 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
         )
         return {"ok": True}
 
-    row = fetch_handoff_telegram_alert(str(chat_id), orig_id)
+    from src.admin import inbox
+
+    row = inbox.fetch_alert_by_message(settings, str(chat_id), orig_id) or fetch_handoff_telegram_alert(
+        str(chat_id), orig_id
+    )
     if not row:
-        logger.info(
-            "telegram webhook: no handoff row for reply_to message_id=%s", orig_id
-        )
+        logger.info("telegram webhook: no handoff row for reply_to message_id=%s", orig_id)
         send_telegram_thread_reply(
             chat_id=owner_chat,
             reply_to_message_id=incoming_mid,
             text=(
-                "No saved lead for that alert (e.g. DB insert failed earlier, or you replied to the "
-                "wrong message). Fix deploy + Supabase per docs/telegram_setup.md, then get a "
-                "fresh lead alert and reply to that bubble."
+                "That message is not a visitor alert I have on record, so there is nobody to email. "
+                "Reply to a lead alert bubble, or use /reply <id> <text> with an id from /inbox."
             ),
         )
         return {"ok": True}
 
-    visitor_email = row.get("visitor_email")
-    session_id = str(row.get("session_id") or "")
-    prior_q = str(row.get("user_query") or "")[:800]
-    intent_tag = str(row.get("intent") or "handoff").strip()[:120] or "handoff"
-    session_short = session_id[:8] if len(session_id) >= 8 else (session_id or "—")
-
-    if not _valid_visitor_email(visitor_email):
-        send_telegram_thread_reply(
-            chat_id=owner_chat,
-            reply_to_message_id=incoming_mid,
-            text=(
-                "No visitor email was captured for that alert — ask them to leave an "
-                "email on the site, or handle this thread manually."
-            ),
-        )
-        return {"ok": True}
-
-    subject = f"Message from {settings.owner_name} (portfolio)"
-
-    t0 = time.perf_counter()
-    polished = polish_owner_reply_for_visitor_email(
-        settings=settings,
-        owner_draft=owner_text,
-        visitor_question=prior_q,
-        intent=intent_tag,
-    )
-    if not (polished or "").strip():
-        polished = owner_text
-
-    text_body = build_branded_visitor_email_plain(
-        settings=settings,
-        polished_plain_body=polished,
-        session_short=session_short,
-    )
-    html_body = build_branded_visitor_email_html(
-        settings=settings,
-        polished_plain_body=polished,
-        session_short=session_short,
-    )
-
-    try:
-        sent = send_gmail_multipart(
-            to_addr=str(visitor_email).strip(),
-            subject=subject,
-            text_body=text_body,
-            html_body=html_body,
-        )
-    except CalendarOAuthError:
-        logger.exception("telegram webhook: Gmail OAuth failed")
-        send_telegram_thread_reply(
-            chat_id=owner_chat,
-            reply_to_message_id=incoming_mid,
-            text=(
-                "Gmail send failed (OAuth). Fix GOOGLE_REFRESH_TOKEN / scopes on the API "
-                "host, then try again."
-            ),
-        )
-        return {"ok": True}
-
-    elapsed_ms = (time.perf_counter() - t0) * 1000
-    logger.info(
-        "telegram visitor email: session=%s ok=%s ms=%.0f polish=%s",
-        session_short,
-        sent,
-        elapsed_ms,
-        settings.visitor_reply_email_polish,
-    )
-
-    if sent:
-        send_telegram_thread_reply(
-            chat_id=owner_chat,
-            reply_to_message_id=incoming_mid,
-            text=f"Emailed your reply to {str(visitor_email).strip()}.",
-        )
-    else:
-        send_telegram_thread_reply(
-            chat_id=owner_chat,
-            reply_to_message_id=incoming_mid,
-            text="Gmail API returned an error — check API logs.",
-        )
-
+    result = inbox.send_visitor_reply(settings, alert=row, owner_text=owner_text, channel="telegram")
+    logger.info("telegram visitor email: session=%s ok=%s", str(row.get("session_id") or "")[:8], result.ok)
+    send_telegram_thread_reply(chat_id=owner_chat, reply_to_message_id=incoming_mid, text=result.detail)
     return {"ok": True}
+
+
+def _handle_button(callback: dict, owner_chat: str) -> None:
+    """Route inline buttons: ``bp:*`` act on blog posts, ``ho:*`` on visitor alerts."""
+    data = str(callback.get("data") or "")
+    message = callback.get("message") or {}
+    chat_id = str((message.get("chat") or {}).get("id") or "").strip()
+    message_id = message.get("message_id")
+    if data.startswith("bp:") and chat_id == owner_chat and isinstance(message_id, int):
+        from src.telegram_bot.commands import handle_post_button
+
+        try:
+            handle_post_button(get_settings(), callback, chat_id, message_id)
+        except Exception:
+            logger.exception("telegram webhook: post button failed")
+        return
+    if data.startswith("kw:") and chat_id == owner_chat and isinstance(message_id, int):
+        from src.telegram_bot.keywords import handle_keyword_button
+
+        try:
+            handle_keyword_button(get_settings(), callback, chat_id, message_id)
+        except Exception:
+            logger.exception("telegram webhook: keyword button failed")
+        return
+    _handle_handoff_button(callback, owner_chat)
 
 
 def _handle_handoff_button(callback: dict, owner_chat: str) -> None:
@@ -244,5 +178,8 @@ def _handle_handoff_button(callback: dict, owner_chat: str) -> None:
             },
         )
         telegram_call("answerCallbackQuery", {"callback_query_id": cb_id, "text": "Marked handled"})
+        from src.admin import inbox
+
+        inbox.set_alert_status_by_message(settings, chat_id, message_id, "handled")
     else:
         telegram_call("answerCallbackQuery", {"callback_query_id": cb_id})

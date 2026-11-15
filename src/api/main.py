@@ -13,9 +13,14 @@ from src.api.logging_config import (
     configure_logging,
     write_aegis_access_line,
 )
+from src.api.admin_routes import public_router as projects_public_router
+from src.api.admin_routes import router as admin_router
+from src.api.blog_categories import router as blog_categories_router
 from src.api.blog_internal import router as blog_internal_router
 from src.api.blog_routes import router as blog_public_router
 from src.api.health_routes import router as health_router
+from src.api.keyword_routes import router as keyword_router
+from src.api.newsroom_routes import router as newsroom_router
 from src.api.routes import router
 from src.api.scheduler_routes import internal_router as scheduler_internal_router
 from src.api.scheduler_routes import public_router as automation_public_router
@@ -36,6 +41,15 @@ async def lifespan(app: FastAPI):
         "[aegis] Ready. Chat test UI: GET /chat-ui  (file: public/chat.html). "
         "Access log: aegis-access.log in project root."
     )
+    try:  # show the owner's command menu in Telegram (best effort)
+        from src.telegram_bot.commands import BOT_COMMANDS
+        from src.tools.handoff_tool import telegram_call
+
+        chat = str(get_settings().telegram_chat_id or "").strip()
+        if chat:
+            telegram_call("setMyCommands", {"commands": BOT_COMMANDS, "scope": {"type": "chat", "chat_id": chat}})
+    except Exception:
+        logging.getLogger("aegis").warning("[aegis] could not register Telegram commands")
     scheduler = None
     if get_settings().scheduler_enabled:
         try:
@@ -76,21 +90,31 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(blog_categories_router)  # before /blog/{slug}
 app.include_router(blog_public_router)
 app.include_router(blog_internal_router)
 app.include_router(health_router)
 app.include_router(telegram_router)
 app.include_router(scheduler_internal_router)
 app.include_router(automation_public_router)
+app.include_router(admin_router)
+app.include_router(projects_public_router)
+app.include_router(keyword_router)
+app.include_router(newsroom_router)
 
 # Versioned aliases for forward-compatible clients.
 app.include_router(router, prefix="/v1")
+app.include_router(blog_categories_router, prefix="/v1")
 app.include_router(blog_public_router, prefix="/v1")
 app.include_router(blog_internal_router, prefix="/v1")
 app.include_router(health_router, prefix="/v1")
 app.include_router(telegram_router, prefix="/v1")
 app.include_router(scheduler_internal_router, prefix="/v1")
 app.include_router(automation_public_router, prefix="/v1")
+app.include_router(admin_router, prefix="/v1")
+app.include_router(projects_public_router, prefix="/v1")
+app.include_router(keyword_router, prefix="/v1")
+app.include_router(newsroom_router, prefix="/v1")
 
 _PUBLIC = Path(__file__).resolve().parents[2] / "public"
 _CHAT_HTML = _PUBLIC / "chat.html"
@@ -119,6 +143,10 @@ def root():
             "GET /internal/scheduler/status, POST /internal/scheduler/jobs/{name}/run|pause|resume, "
             "POST /internal/scheduler/tick (auth required)"
         ),
+        "admin": "GET /admin/overview, /admin/inbox, /admin/posts, /admin/ideas, /admin/projects (auth required)",
+        "keywords": "GET /keywords/best, GET /keywords/analyze?q=, POST /keywords/{id}/write (auth required)",
+        "newsroom": "GET /newsroom/sources, GET /newsroom/items, POST /newsroom/collect (auth required)",
+        "projects": "GET /projects (public: admin-managed project overrides)",
         "telegram_webhook": "POST /v1/telegram/webhook (Telegram setWebhook → owner reply → visitor email)",
         "v1_aliases": "GET /v1/health, POST /v1/chat, GET /v1/blog, POST /v1/telegram/webhook",
     }

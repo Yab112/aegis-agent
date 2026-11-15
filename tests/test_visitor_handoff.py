@@ -86,11 +86,13 @@ def test_no_email_is_called_out_and_free_mail_gets_no_site_button():
     b = _brief(user_email=None, history=None, query="what are your rates?")
     assert "no email yet" in b.text and "No email captured" in b.actions[0]
     assert "Reply to this message" not in b.text
-    assert all("url" not in btn for row in b.reply_markup["inline_keyboard"] for btn in row)
+    # No research links without an email; the admin inbox link is always there.
+    urls = [btn["url"] for row in b.reply_markup["inline_keyboard"] for btn in row if "url" in btn]
+    assert len(urls) == 1 and urls[0].endswith("/admin/inbox")
 
     g = _brief(user_email="someone@gmail.com")
     urls = [btn["url"] for row in g.reply_markup["inline_keyboard"] for btn in row if "url" in btn]
-    assert len(urls) == 1 and "linkedin.com" in urls[0]
+    assert len(urls) == 2 and "linkedin.com" in urls[0]  # LinkedIn search + admin inbox, no site button
 
 
 def test_solicitation_is_cold_with_no_draft_button():
