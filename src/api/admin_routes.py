@@ -92,9 +92,16 @@ class StatusBody(BaseModel):
 
 
 @router.get("/inbox")
-def inbox_list(settings: SettingsDep, status_filter: Annotated[str | None, Query(alias="status")] = None) -> dict[str, Any]:
+def inbox_list(
+    settings: SettingsDep,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 25,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict[str, Any]:
     try:
-        return {"items": inbox.list_alerts(settings, status=status_filter or None, limit=100)}
+        counts = inbox.alert_counts(settings)
+        items = inbox.list_alerts(settings, status=status_filter or None, limit=limit, offset=offset)
+        return {"items": items, "total": counts.get(status_filter or "all", 0), "counts": counts}
     except Exception as exc:
         raise _guard(exc) from exc
 
@@ -167,11 +174,17 @@ class GenerateBody(BaseModel):
 
 
 @router.get("/posts")
-def posts_list(settings: SettingsDep, status_filter: Annotated[str | None, Query(alias="status")] = None) -> dict[str, Any]:
-    q = inbox.sb(settings).table("blog_posts").select(POST_LIST_COLS)
+def posts_list(
+    settings: SettingsDep,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> dict[str, Any]:
+    q = inbox.sb(settings).table("blog_posts").select(POST_LIST_COLS, count="exact")
     if status_filter in POST_STATUSES:
         q = q.eq("status", status_filter)
-    return {"items": q.order("created_at", desc=True).limit(200).execute().data or []}
+    res = q.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
+    return {"items": res.data or [], "total": res.count or 0}
 
 
 @router.get("/posts/{post_id}")

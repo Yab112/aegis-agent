@@ -105,8 +105,24 @@ def build_people(client: Any) -> dict[str, Any]:
 
 
 @router.get("/people", summary="Everyone who left an email, newest first")
-def people(settings: SettingsDep) -> dict[str, Any]:
-    return build_people(inbox.sb(settings))
+def people(settings: SettingsDep, q: str = "", only: str = "", limit: int = 25, offset: int = 0) -> dict[str, Any]:
+    """`only=waiting` keeps people who asked something and have had no email from you."""
+    out = build_people(inbox.sb(settings))
+    items = out["items"]
+    waiting = sum(1 for p in items if p["open"] > 0 and p["emails_sent"] == 0)
+    needle = q.strip().lower()
+    if needle:
+        items = [p for p in items if needle in p["email"] or needle in p["last_question"].lower()]
+    if only == "waiting":
+        items = [p for p in items if p["open"] > 0 and p["emails_sent"] == 0]
+    limit, offset = min(max(limit, 1), 100), max(offset, 0)
+    return {
+        "items": items[offset : offset + limit],
+        "total": len(items),
+        "everyone": len(out["items"]),
+        "waiting": waiting,
+        "anonymous_conversations": out["anonymous_conversations"],
+    }
 
 
 @router.get("/people/{email}", summary="One person's conversations, chat sessions and the mail you sent them")

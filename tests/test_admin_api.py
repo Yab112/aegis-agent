@@ -53,6 +53,10 @@ class _Table:
         self._limit = n
         return self
 
+    def range(self, start, end):
+        self._range = (start, end)
+        return self
+
     def execute(self):
         hit = [r for r in self.rows if all(f(r) for f in self.filters)]
         if self.op == "insert":
@@ -67,7 +71,10 @@ class _Table:
             for r in hit:
                 self.rows.remove(r)
             return _Res(hit)
-        return _Res(hit[: self._limit] if self._limit else hit, count=len(hit))
+        total = len(hit)
+        if getattr(self, "_range", None):
+            hit = hit[self._range[0] : self._range[1] + 1]
+        return _Res(hit[: self._limit] if self._limit else hit, count=total)
 
 
 class _Client:

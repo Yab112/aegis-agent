@@ -75,13 +75,18 @@ def body_to_html(body: str) -> str:
             flush()
             blocks.append(
                 '<table role="presentation" cellpadding="0" cellspacing="0" style="margin:8px 0 22px;"><tr>'
-                f'<td style="background:{GREEN};"><a href="{html.escape(button.group(2), quote=True)}" '
-                'style="display:inline-block;padding:12px 22px;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;">'
-                f"{html.escape(button.group(1))} &rarr;</a></td></tr></table>"
+                f'<td style="background:#36d98a;border:2px solid {INK};"><a href="{html.escape(button.group(2), quote=True)}" '
+                f'style="display:inline-block;padding:13px 26px;font-size:15px;font-weight:800;letter-spacing:0.02em;color:{INK};text-decoration:none;">'
+                f"{html.escape(button.group(1))} &rarr;</a></td>"
+                f'<td style="width:5px;background:{INK};font-size:0;line-height:0;">&nbsp;</td></tr>'
+                f'<tr><td colspan="2" style="height:5px;background:{INK};font-size:0;line-height:0;">&nbsp;</td></tr></table>'
             )
         elif line.startswith("## "):
             flush()
-            blocks.append(f'<h2 style="margin:26px 0 10px;font-size:18px;line-height:1.3;color:{INK};">{_inline(line[3:])}</h2>')
+            blocks.append(
+                f'<h2 style="margin:28px 0 12px;padding-bottom:8px;border-bottom:2px solid {INK};font-size:13px;line-height:1.3;'
+                f'letter-spacing:0.12em;text-transform:uppercase;color:{INK};">{_inline(line[3:])}</h2>'
+            )
         elif line.startswith(("- ", "* ")):
             if para:
                 flush()
@@ -89,7 +94,7 @@ def body_to_html(body: str) -> str:
         elif line.startswith(">"):
             flush()
             blocks.append(
-                f'<p style="margin:0 0 16px;padding:10px 14px;border-left:3px solid {GREEN};background:#f3efe6;'
+                f'<p style="margin:0 0 18px;padding:14px 16px;border-left:4px solid {PURPLE};background:#f1e9f7;'
                 f'font-size:15px;line-height:1.6;color:{MUTED};">{_inline(line.lstrip("> "))}</p>'
             )
         else:
