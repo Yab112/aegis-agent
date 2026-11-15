@@ -280,7 +280,16 @@ class Scheduler:
             msg = f"⚠️ Aegis scheduler: {job.name} failed ({trigger}).\n{error}"
         elif status == "success" and result:
             base = str(self.settings.portfolio_url).rstrip("/")
-            if result.get("status") == "inserted" and result.get("post_status") == "published":
+            if result.get("status") == "inserted" and result.get("id"):
+                # Rich message with Publish / Discard / Open-in-admin buttons.
+                try:
+                    from src.telegram_bot.notify import notify_post_written
+
+                    notify_post_written(self.settings, result)
+                except Exception as exc:
+                    logger.warning("scheduler: post notification failed: %s", exc)
+                return
+            elif result.get("status") == "inserted" and result.get("post_status") == "published":
                 msg = f"📝 New blog post published: {base}/blog/{result.get('slug')}"
             elif result.get("status") == "inserted":
                 msg = f"📝 New blog post saved as {result.get('post_status')}: {result.get('slug')}"

@@ -13,6 +13,7 @@ from postgrest.exceptions import APIError
 from supabase import create_client
 
 from config.settings import Settings, get_settings
+from src.api.blog_categories import post_extras
 
 logger = logging.getLogger("aegis.blog_api")
 
@@ -31,6 +32,9 @@ class BlogListItem(BaseModel):
     image_url: str | None = None
     image_alt: str | None = None
     og_image_url: str | None = None
+    category: str | None = None
+    category_label: str | None = None
+    format: str | None = None
 
 
 class BlogListResponse(BaseModel):
@@ -52,6 +56,10 @@ class BlogDetailResponse(BaseModel):
     image_alt: str | None = None
     og_image_url: str | None = None
     canonical_url: str | None = None
+    category: str | None = None
+    category_label: str | None = None
+    format: str | None = None
+    keyword: str | None = None
     topic_key: str | None = None
     resource_links: list[dict[str, str]] = Field(default_factory=list)
     related_posts: list[BlogListItem] = Field(default_factory=list)
@@ -255,11 +263,16 @@ def list_blog_posts(
         rows = rows_filtered[start : end + 1]
 
     default_og = settings.blog_default_og_image
+    extras = post_extras(client, [r["slug"] for r in rows])
     items: list[BlogListItem] = []
     for r in rows:
         img, og = _public_image_urls(r, default_og)
+        extra = extras.get(r["slug"], {})
         items.append(
             BlogListItem(
+                category=extra.get("category"),
+                category_label=extra.get("category_label"),
+                format=extra.get("format"),
                 slug=r["slug"],
                 title=r["title"],
                 description=r["description"],
@@ -452,7 +465,12 @@ def get_blog_post(
     related_posts = _fetch_related_posts(
         client, slug=slug, tags=tags, topic_key=topic_key, default_og=default_og
     )
+    extra = post_extras(client, [slug]).get(slug, {})
     response = BlogDetailResponse(
+        category=extra.get("category"),
+        category_label=extra.get("category_label"),
+        format=extra.get("format"),
+        keyword=extra.get("keyword"),
         slug=r["slug"],
         title=r["title"],
         description=r["description"],

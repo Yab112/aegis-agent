@@ -138,6 +138,8 @@ class Settings(BaseSettings):
     scheduler_blog_ideas_cron: str = "0 10 * * 0,3"
     scheduler_blog_draft_cron: str = "0 9 */5 * *"
     scheduler_blog_publish_cron: str = "0 12 * * *"
+    scheduler_news_collect_cron: str = "0 */3 * * *"
+    scheduler_keyword_refresh_cron: str = "20 */6 * * *"
     # draft | review | published — status for posts written by the scheduled draft job.
     scheduler_blog_draft_status: str = "published"
     # Failed scheduled runs retry with exponential backoff, then give up until the next slot.

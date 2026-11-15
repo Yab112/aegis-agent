@@ -219,7 +219,14 @@ def build_handoff_brief(
         if domain not in _FREE_MAIL and re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}", domain):
             research.insert(0, {"text": f"🌐 {domain}", "url": f"https://{domain}"})
         rows.append(research)
-    rows.append([{"text": "✅ Mark handled", "callback_data": "ho:done"}])
+    last_row: list[dict] = [{"text": "✅ Mark handled", "callback_data": "ho:done"}]
+    try:  # the same conversation, with the full transcript, in the admin inbox
+        from config.settings import get_settings
+
+        last_row.append({"text": "🗂 Admin inbox", "url": f"{str(get_settings().portfolio_url).rstrip('/')}/admin/inbox"})
+    except Exception:
+        pass
+    rows.append(last_row)
 
     return HandoffBrief(
         text=text,

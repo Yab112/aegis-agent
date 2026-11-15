@@ -86,6 +86,20 @@ def _run_blog_publish(ctx: JobContext) -> dict[str, Any]:
     return run_publish_reviewed(ctx.settings.supabase_url, ctx.settings.supabase_service_key)
 
 
+def _run_news_collect(ctx: JobContext) -> dict[str, Any]:
+    from src.newsroom.collector import collect_all
+    from src.newsroom.store import NewsroomStore
+
+    return collect_all(NewsroomStore.from_settings(ctx.settings))
+
+
+def _run_keyword_refresh(ctx: JobContext) -> dict[str, Any]:
+    from src.newsroom.service import refresh_keywords
+    from src.newsroom.store import NewsroomStore
+
+    return refresh_keywords(NewsroomStore.from_settings(ctx.settings))
+
+
 def _run_kb_ingest(ctx: JobContext) -> dict[str, Any]:
     from src.rag.ingest import run_kb_ingest
 
@@ -101,6 +115,22 @@ def _kb_fingerprint() -> str:
 
 def build_jobs(settings: Any) -> dict[str, JobDef]:
     jobs = [
+        JobDef(
+            name="news_collect",
+            title="Source reader",
+            description="Reads every trusted AI source (lab blogs, newsrooms, paper feeds) and stores what is new.",
+            cron=getattr(settings, "scheduler_news_collect_cron", "0 */3 * * *"),
+            run=_run_news_collect,
+            lease_seconds=10 * 60,
+        ),
+        JobDef(
+            name="keyword_refresh",
+            title="Keyword desk",
+            description="Finds the topics several sources share, measures search and builder interest, and scores them.",
+            cron=getattr(settings, "scheduler_keyword_refresh_cron", "20 */6 * * *"),
+            run=_run_keyword_refresh,
+            lease_seconds=20 * 60,
+        ),
         JobDef(
             name="blog_ideas",
             title="Idea radar",
