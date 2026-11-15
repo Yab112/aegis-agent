@@ -253,11 +253,13 @@ def list_blog_posts(
         # Build filtered rows in-memory to support OR behavior: topic_key OR tags overlap.
         data_res = base_query.order("published_at", desc=True).limit(500).execute()
         all_rows = data_res.data or []
+        categories = post_extras(client, [r["slug"] for r in all_rows])  # ?topic= also matches a category slug
         rows_filtered: list[dict] = []
         for r in all_rows:
             row_topic_key = _normalize_topic(r.get("topic_key"))
             row_tags = [_normalize_topic(str(t)) for t in (r.get("tags") or [])]
-            if normalized_topic == row_topic_key or normalized_topic in row_tags:
+            row_category = _normalize_topic((categories.get(r["slug"]) or {}).get("category"))
+            if normalized_topic in (row_topic_key, row_category) or normalized_topic in row_tags:
                 rows_filtered.append(r)
         total = len(rows_filtered)
         rows = rows_filtered[start : end + 1]

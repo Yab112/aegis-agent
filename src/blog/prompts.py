@@ -45,8 +45,12 @@ EVIDENCE
 - Every factual claim about a product, company, date, benchmark or statistic needs a footnote:
   write `[^1]` in the sentence and define it at the very end as
   `[^1]: What the source says. [Source title](URL)` using a URL from SOURCES, character for character.
-- Never cite or link a URL that is not in SOURCES. If there is no source, state it as your own
-  reasoning or experience ("in my experience", "a reasonable estimate is") or leave it out.
+- Never cite or link a URL that is not in SOURCES. If SOURCES do not support a claim, leave it out.
+- Attribute in the sentence itself, not only in the footnote: "OpenAI says", "according to The Verge",
+  "the paper reports". The reader must always know who is speaking.
+- No opinion or prediction of your own in the body. If the format has a closing section
+  (`## Why it matters`, `## What to do next`), keep it to what the sources support and
+  phrase it as reasoning from them ("this suggests", "the numbers point to").
 - Give estimates as ranges and say how confident you are. Name disagreements between sources.
 
 RICH BLOCKS — use them where they explain something better than prose
@@ -84,7 +88,8 @@ OUTPUT RULES
 - Output ONLY the Markdown body. No JSON wrapper, no YAML frontmatter, no title line.
 - First line must be `{first_heading}`.
 - Short code blocks are welcome when the topic is code.
-- Voice: clear, practical, slightly warm, first person singular. Not corporate.
+- Voice: a clear, neutral reporter. Never "I", "we", "my" or "our": this post is assembled from
+  other people's reporting, not from personal experience. Plain words, no hype.
 - Do not wrap the whole article in a code fence. No preamble.
 """
 
@@ -125,13 +130,14 @@ FORMATS: dict[str, dict[str, object]] = {
 - 4 to 7 further `##` sections, with `###` sub-sections where a section has distinct parts.
   Open a section with its claim, then support it.
 - Include a section on limits, trade-offs or where this advice fails.
-- End with a short `## What to do next` section of concrete steps. No "in conclusion" summary.
+- End with a short `## What to watch next` section: the open questions and upcoming dates the sources mention.
+  No "in conclusion" summary.
 - 1400 to 2200 words of prose. Paragraphs of 3 to 6 sentences.""",
     },
     "news": {
         "first": "## What happened",
         "min_words": 280,
-        "structure": """- A news brief: 350 to 650 words. Facts first, opinion last and labelled as yours.
+        "structure": """- A news brief: 350 to 650 words. Facts only, each attributed to its source.
 - `## What happened`: two or three sentences a reader could repeat, with the date and who announced it.
   Follow it with a `> [!KEY]` callout of 2 to 4 bullet facts.
 - `## The details`: the numbers, prices, limits and dates, as a table when there are three or more.

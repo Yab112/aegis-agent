@@ -90,8 +90,10 @@ def refresh_keywords(store: NewsroomStore, *, days: int = 7, pause: float = 1.2)
         else:
             external = {}  # scored on coverage alone this round; picked up next refresh
         row = build_keyword_row(cand, external, post_titles)
-        if stored and stored.get("status") in ("written", "dismissed"):
-            row["status"] = stored["status"]  # your decision is kept
+        # Every row carries a status: rows are upserted in one batch, and a key missing from
+        # some rows is sent as NULL, which the table rejects. An existing status is always kept
+        # (written, dismissed, writing), so a refresh never undoes your decision.
+        row["status"] = (stored or {}).get("status") or "candidate"
         rows.append(row)
     if rows:
         store.upsert_keywords(rows)
