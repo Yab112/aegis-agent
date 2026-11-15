@@ -118,3 +118,20 @@ def test_page_scan_keeps_matching_links_only(monkeypatch):
     src = {"key": "anthropic-news", "kind": "page", "url": "https://www.anthropic.com/news", "link_pattern": r"^/news/[a-z0-9-]+$"}
     items = fetchers.fetch_source(src)
     assert [(i["title"], i["url"]) for i in items] == [("Claude ships a thing today", "https://www.anthropic.com/news/claude-ships-thing")]
+
+
+def test_library_finds_articles_for_a_free_text_topic():
+    from src.newsroom.library import rank_items, topic_words
+
+    words = topic_words("How AI models game evaluators: reward hacking in Gemini 4")
+    assert "evaluators" in words and "hacking" in words and "models" not in words and "how" not in words
+    items = [
+        _item("anthropic-alignment", "Reward hacking in evaluators: a study", tier=1),
+        _item("verge-ai", "Gemini 4 arrives"),
+        _item("techcrunch-ai", "A hacking story about banks"),
+        _item("ars-ai", "Evaluators and reward hacking are everywhere"),
+    ]
+    found = rank_items(items, words)
+    titles = [f["title"] for f in found]
+    assert titles[0].startswith("Reward hacking in evaluators") and "A hacking story about banks" not in titles
+    assert len(found) == 2  # "Gemini 4 arrives" shares only one plain word ("gemini"); "4" is too short to count

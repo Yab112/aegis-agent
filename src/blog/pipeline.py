@@ -193,13 +193,21 @@ def run_blog_draft_once(cfg: BlogPipelineConfig, topic: dict[str, Any] | None = 
         tags = tags_idea
     tags = [str(t).strip().lower() for t in tags if str(t).strip()][:16]
 
+    topic_sources = (topic or {}).get("sources")
+    if not topic_sources:
+        # No keyword behind this post: look for matching articles in our own library of trusted sources.
+        from src.newsroom.library import find_sources_for_topic
+
+        topic_sources = find_sources_for_topic(client, f"{final_title} {angle}")
+        logger.info("blog research: %s matching article(s) found in the source library", len(topic_sources))
+
     pack = build_research_pack(
         api_key=cfg.gemini_api_key,
         model=cfg.gemini_model,
         title=final_title,
         angle=angle or title,
         source_url=source_url,
-        extra_sources=(topic or {}).get("sources"),
+        extra_sources=topic_sources,
     )
     resource_links = _resource_links_for_post(pack, tags)
 
