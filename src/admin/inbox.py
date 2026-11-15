@@ -55,12 +55,9 @@ def send_visitor_reply(
     polish: bool = True,
 ) -> ReplyResult:
     """Email the owner's reply to the visitor behind ``alert`` and record it."""
-    from src.email_templates import (
-        build_branded_visitor_email_html,
-        build_branded_visitor_email_plain,
-        polish_owner_reply_for_visitor_email,
-    )
-    from src.tools.calendar_tool import CalendarOAuthError, send_gmail_multipart
+    from src.email_templates import polish_owner_reply_for_visitor_email
+    from src.mailer.layout import render_email, variables_for
+    from src.mailer.provider import send_email
 
     text = (owner_text or "").strip()
     if not text:
@@ -69,8 +66,6 @@ def send_visitor_reply(
     if not valid_email(visitor_email):
         return ReplyResult(False, "No visitor email was captured for this conversation.")
     to_email = str(visitor_email).strip()
-    session_id = str(alert.get("session_id") or "")
-    session_short = session_id[:8] or "—"
 
     sent_body = text
     if polish:
@@ -87,24 +82,17 @@ def send_visitor_reply(
         except Exception as exc:
             logger.warning("reply polish failed, sending as typed: %s", exc)
 
-    try:
-        delivered = send_gmail_multipart(
-            to_addr=to_email,
-            subject=f"Message from {settings.owner_name} (portfolio)",
-            text_body=build_branded_visitor_email_plain(
-                settings=settings, polished_plain_body=sent_body, session_short=session_short
-            ),
-            html_body=build_branded_visitor_email_html(
-                settings=settings, polished_plain_body=sent_body, session_short=session_short
-            ),
-        )
-    except CalendarOAuthError:
-        logger.exception("visitor reply: Gmail OAuth failed")
-        return ReplyResult(False, "Gmail send failed (OAuth). Refresh GOOGLE_REFRESH_TOKEN on the API host.", to_email)
-
+    mail = render_email(
+        settings,
+        subject=f"Message from {settings.owner_name}",
+        body=sent_body,
+        variables=variables_for(settings, to_email),
+    )
+    result = send_email(to=to_email, subject=mail["subject"], html=mail["html"], text=mail["text"])
+    delivered = result.ok
     _record_reply(settings, alert, channel, to_email, text, sent_body, bool(delivered))
     if not delivered:
-        return ReplyResult(False, "Gmail API returned an error — check API logs.", to_email, sent_body)
+        return ReplyResult(False, result.error or "The email could not be sent.", to_email, sent_body)
     return ReplyResult(True, f"Emailed your reply to {to_email}.", to_email, sent_body)
 
 

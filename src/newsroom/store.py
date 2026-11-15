@@ -12,7 +12,7 @@ from src.newsroom.registry import SEED_SOURCES
 logger = logging.getLogger("aegis.newsroom.store")
 
 MIGRATION_HINT = "Run scripts/supabase_newsroom.sql in Supabase, then retry."
-KEYWORD_COLS = "id,phrase,category,suggested_format,score,signals,reason,status,item_count,source_count,first_seen_at,updated_at,post_id"
+KEYWORD_COLS = "id,phrase,display,category,suggested_format,score,signals,reason,status,item_count,source_count,first_seen_at,updated_at,post_id"
 
 
 def now_iso() -> str:
