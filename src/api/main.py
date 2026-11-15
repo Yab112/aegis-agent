@@ -16,6 +16,7 @@ from src.api.logging_config import (
 from src.api.admin_email_routes import router as admin_email_router
 from src.api.admin_people_routes import router as admin_people_router
 from src.api.admin_routes import public_router as projects_public_router
+from src.api.admin_tools_routes import router as admin_tools_router
 from src.api.admin_routes import router as admin_router
 from src.api.blog_categories import router as blog_categories_router
 from src.api.blog_internal import router as blog_internal_router
@@ -101,6 +102,7 @@ app.include_router(scheduler_internal_router)
 app.include_router(automation_public_router)
 app.include_router(admin_email_router)
 app.include_router(admin_people_router)
+app.include_router(admin_tools_router)
 app.include_router(admin_router)
 app.include_router(projects_public_router)
 app.include_router(keyword_router)
@@ -117,6 +119,7 @@ app.include_router(scheduler_internal_router, prefix="/v1")
 app.include_router(automation_public_router, prefix="/v1")
 app.include_router(admin_email_router, prefix="/v1")
 app.include_router(admin_people_router, prefix="/v1")
+app.include_router(admin_tools_router, prefix="/v1")
 app.include_router(admin_router, prefix="/v1")
 app.include_router(projects_public_router, prefix="/v1")
 app.include_router(keyword_router, prefix="/v1")

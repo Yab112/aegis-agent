@@ -161,14 +161,16 @@ def fetch_alert_by_message(settings: Settings, chat_id: str, message_id: int) ->
         return None
 
 
-def list_alerts(settings: Settings, *, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+def list_alerts(
+    settings: Settings, *, status: str | None = None, limit: int = 50, offset: int = 0
+) -> list[dict[str, Any]]:
     """Newest first. Falls back to the pre-migration columns so the inbox still lists."""
     client = sb(settings)
     try:
         q = client.table("handoff_telegram_alerts").select(f"{ALERT_COLS},status,handled_at")
         if status:
             q = q.eq("status", status)
-        return q.order("created_at", desc=True).limit(limit).execute().data or []
+        return q.order("created_at", desc=True).range(offset, offset + limit - 1).execute().data or []
     except Exception as exc:
         if not is_missing_schema(exc):
             raise
@@ -176,12 +178,29 @@ def list_alerts(settings: Settings, *, status: str | None = None, limit: int = 5
             client.table("handoff_telegram_alerts")
             .select(ALERT_COLS)
             .order("created_at", desc=True)
-            .limit(limit)
+            .range(offset, offset + limit - 1)
             .execute()
             .data
             or []
         )
         return [{**r, "status": "open", "handled_at": None} for r in rows]
+
+
+def alert_counts(settings: Settings) -> dict[str, int]:
+    """How many conversations are in each status (for the inbox tabs and paging)."""
+    client = sb(settings)
+    counts: dict[str, int] = {}
+    try:
+        for status in STATUSES:
+            counts[status] = (
+                client.table("handoff_telegram_alerts").select("id", count="exact").eq("status", status).limit(1).execute().count or 0
+            )
+    except Exception as exc:
+        if not is_missing_schema(exc):
+            raise
+        counts = {"open": client.table("handoff_telegram_alerts").select("id", count="exact").limit(1).execute().count or 0}
+    counts["all"] = sum(counts.values())
+    return counts
 
 
 def get_conversation(settings: Settings, alert_id: str) -> dict[str, Any] | None:
