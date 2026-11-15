@@ -101,7 +101,8 @@ def test_refresh_reuses_recent_outside_signals_and_keeps_your_decisions(monkeypa
     rows = {r["phrase"]: r for r in store.saved}
     assert calls == ["gemini 4"] and out["external_lookups"] == 1
     assert rows["chatgpt wallet"]["status"] == "dismissed" and rows["chatgpt wallet"]["signals"]["search"]["score"] == 0.9
-    assert "status" not in rows["gemini 4"] and rows["gemini 4"]["sources"][0]["tier"] == 1
+    assert rows["gemini 4"]["status"] == "candidate" and rows["gemini 4"]["sources"][0]["tier"] == 1
+    assert len({frozenset(r) for r in store.saved}) == 1  # every row has the same keys, or the batch upsert sends NULLs
     assert rows["gemini 4"]["category"] == "model-releases" and rows["gemini 4"]["suggested_format"] == "news"
 
     topic = topic_from_keyword({**rows["gemini 4"], "id": "k1"})
