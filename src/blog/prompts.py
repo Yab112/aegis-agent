@@ -39,6 +39,11 @@ for other engineers. This is not a company blog, a consultancy or an advice colu
 - The post ends when the reporting ends. Do not add a closing section just to have one.
 The standard is organised, evidenced, and honest about uncertainty.
 
+SHAPE FOLLOWS THE STORY
+The outline under STRUCTURE is a guide, not a template. A big story with many sources deserves a
+long piece that follows every thread; a small one should stay short. Add, merge or drop sections
+when the material calls for it, and never pad to reach a length.
+
 Planned title: {title}
 Angle: {angle}
 Tags (use naturally if they fit): {tags}
@@ -77,7 +82,7 @@ RICH BLOCKS — use them where they explain something better than prose
    Put a blank line before and after it.
 3. Diagram (optional). A fenced block tagged `mermaid` with a small flowchart or sequence diagram
    (under 15 nodes, plain labels without parentheses or quotes).
-4. Figure (0 to 2). A fenced block tagged `figure` holding JSON with a search query for a real,
+4. Figure (0 to 4; use several when the story has several things worth seeing). A fenced block tagged `figure` holding JSON with a search query for a real,
    freely licensed photo or diagram; the pipeline finds the image and adds the credit and licence:
 ```figure
 {{"query": "specific searchable subject", "caption": "What the image shows and why it is here.", "alt": "Plain description"}}
@@ -88,7 +93,13 @@ RICH BLOCKS — use them where they explain something better than prose
    - `==the one number or phrase a skimmer must not miss==` (highlight)
    - `{{+an improvement, e.g. 38% faster+}}` and `{{-a regression or risk, e.g. 2x the cost-}}`
 7. Code: fence with the language, and name the file when it helps: ```python title="retry.py"
-8. Emoji: at most one at the start of a list item or callout line where it carries meaning
+8. A post on X, when what someone said is part of the story. Only posts listed under
+   "POSTS ON X" in SOURCES, quoted by their URL; the site shows the real post as a card:
+```xpost
+{{"url": "URL of a post from the POSTS ON X list"}}
+```
+   Introduce it in the sentence before ("the company's CEO replied on X:"). Never retype or invent a post.
+9. Emoji: at most one at the start of a list item or callout line where it carries meaning
    (✅ ⚠️ 📈 🧪). Never in headings and never inside a sentence.
 
 OUTPUT RULES
@@ -139,11 +150,11 @@ FORMATS: dict[str, dict[str, object]] = {
   Open a section with its claim, then support it.
 - One section on where the evidence is thin, disputed, or comes from a single source.
 - If, and only if, the sources name open questions or coming dates, a last short section on those.
-- 1400 to 2200 words of prose. Paragraphs of 3 to 6 sentences.""",
+- Usually 1200 to 2500 words; up to 4000 when the sources support a long story. Paragraphs of 3 to 6 sentences.""",
     },
     "news": {
         "min_words": 280,
-        "structure": """A news brief: 350 to 650 words. Facts only, each attributed to its source.
+        "structure": """News. Usually 350 to 900 words; longer when several sources add real detail. Facts only, each attributed.
 The parts below are roles, not headings: write your own heading for each.
 - The event: two or three sentences a reader could repeat, with the date and who announced it,
   followed by a `> [!KEY]` callout of 2 to 4 bullet facts.
@@ -153,7 +164,7 @@ The parts below are roles, not headings: write your own heading for each.
     },
     "explainer": {
         "min_words": 700,
-        "structure": """An explainer for an engineer who has not followed this topic. 1000 to 1600 words.
+        "structure": """An explainer for an engineer who has not followed this topic. Usually 1000 to 2200 words.
 The parts below are roles, not headings: write your own heading for each.
 - The idea in three sentences, then ONE bold sentence stating it plainly.
 - How it works, built up step by step, with a diagram or a small worked example.

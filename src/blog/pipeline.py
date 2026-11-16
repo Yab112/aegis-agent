@@ -254,6 +254,7 @@ def run_blog_draft_once(cfg: BlogPipelineConfig, topic: dict[str, Any] | None = 
         allowed_urls=pack.urls() + [cfg.portfolio_url],
         figure_resolver=_make_figure_resolver(model, gen_cfg),
         url_checker=url_is_live,
+        x_posts=pack.x_posts,
     )
     if post_format != "course":  # a course teaches; everything else reports
         body_md, advice = drop_advice_sections(body_md)

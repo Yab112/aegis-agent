@@ -32,7 +32,7 @@ def post_keyboard(settings: Any, post_id: str, slug: str, post_status: str) -> d
 def post_written_text(result: dict[str, Any]) -> str:
     rich = result.get("rich") or {}
     facts = [f"{result.get('words', '?')} words", f"{result.get('sources', 0)} source(s)"]
-    for key, label in (("charts", "chart"), ("tables", "table"), ("figures", "figure"), ("diagrams", "diagram"), ("footnotes", "footnote")):
+    for key, label in (("charts", "chart"), ("tables", "table"), ("figures", "figure"), ("x_posts", "X post"), ("diagrams", "diagram"), ("footnotes", "footnote")):
         n = int(rich.get(key) or 0)
         if n:
             facts.append(f"{n} {label}{'s' if n != 1 else ''}")

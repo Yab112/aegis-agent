@@ -60,6 +60,7 @@ class ResearchPack:
     notes: str = ""
     sources: list[Source] = field(default_factory=list)
     grounded: bool = False
+    x_posts: list[dict[str, Any]] = field(default_factory=list)  # posts on X linked from the sources
 
     def urls(self) -> list[str]:
         return [s.url for s in self.sources]
@@ -77,6 +78,10 @@ class ResearchPack:
             lines.append(f"[S{i}] {s.title}\n     {s.url}")
             if s.excerpt:
                 lines.append(f"     excerpt: {s.excerpt[:1500]}")
+        if self.x_posts:
+            lines.append("\nPOSTS ON X linked from the sources (the only ones you may quote):")
+            for i, post in enumerate(self.x_posts, 1):
+                lines.append(f"[X{i}] {post['author']} (@{post['handle']}), {post['date']}: {post['text'][:400]}\n     {post['url']}")
         if self.notes:
             lines.append("\nRESEARCH NOTES (from the sources above):\n" + self.notes[:12000])
         return "\n".join(lines)
@@ -104,6 +109,9 @@ def is_public_http_url(url: str) -> bool:
     return True
 
 
+_PAGE_HTML: dict[str, str] = {}  # url -> raw html of pages read in this run (for links to posts on X)
+
+
 def fetch_page_text(url: str, *, timeout: int = 15, max_chars: int = 6000) -> tuple[str, str] | None:
     """Return (title, readable text) for a public page, or None."""
     if not is_public_http_url(url):
@@ -119,6 +127,7 @@ def fetch_page_text(url: str, *, timeout: int = 15, max_chars: int = 6000) -> tu
     try:
         from bs4 import BeautifulSoup
 
+        _PAGE_HTML[url] = resp.text[:800_000]
         soup = BeautifulSoup(resp.text[:800_000], "html.parser")
         for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form", "noscript"]):
             tag.decompose()
@@ -219,5 +228,15 @@ def build_research_pack(
                 pack.add(s)
         except Exception as exc:
             logger.warning("research: grounded search unavailable (%s); writing from the source page only", exc)
-    logger.info("research: %s source(s), grounded=%s, notes=%s chars", len(pack.sources), pack.grounded, len(pack.notes))
+    try:
+        from src.blog.social import collect_x_posts
+
+        pack.x_posts = collect_x_posts([_PAGE_HTML[u] for u in pack.urls() if u in _PAGE_HTML])
+    except Exception as exc:
+        logger.info("research: posts on X not collected (%s)", exc)
+    _PAGE_HTML.clear()
+    logger.info(
+        "research: %s source(s), %s post(s) on X, grounded=%s, notes=%s chars",
+        len(pack.sources), len(pack.x_posts), pack.grounded, len(pack.notes),
+    )
     return pack
