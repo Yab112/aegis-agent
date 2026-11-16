@@ -109,3 +109,20 @@ def test_advice_and_wrap_up_sections_are_removed_but_footnotes_survive():
     assert "Audit your evals" not in body and "Short recap" not in body
     assert "What we still do not know" in body and "inside code, must stay" in body
     assert "[^1]: Stated by [DeepMind]" in body
+
+
+def test_x_posts_are_quoted_only_when_fetched_and_never_reworded():
+    from src.blog.social import extract_post_urls
+
+    page = '<a href="https://twitter.com/OpenAI/status/1790072174117613963?s=20">x</a> <a href="https://x.com/intent/status/123456">y</a>'
+    assert extract_post_urls(page) == ["https://x.com/OpenAI/status/1790072174117613963"]
+    real = {"url": "https://x.com/OpenAI/status/1790072174117613963", "author": "OpenAI", "handle": "OpenAI", "text": "Say hello to GPT-4o", "date": "May 13, 2024"}
+    md = (
+        "## A\n\nThe lab announced it on X:\n\n"
+        + _block("xpost", {"url": "https://twitter.com/OpenAI/status/1790072174117613963/", "text": "words the model made up"})
+        + "\n\n" + _block("xpost", {"url": "https://x.com/someone/status/999999999"})
+    )
+    body, report = process_body(md, allowed_urls=[], x_posts=[real])
+    assert report.x_posts == 1 and body.count("```xpost") == 1
+    quoted = json.loads(body.split("```xpost\n")[1].split("\n```")[0])
+    assert quoted == real and "made up" not in body and "someone/status" not in body

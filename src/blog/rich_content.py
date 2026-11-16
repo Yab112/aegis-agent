@@ -32,7 +32,7 @@ MAX_POINTS = 60
 HTTP_UA = "aegis-blog-pipeline/2.0 (static site blog generator)"
 
 _FENCE_RE = re.compile(
-    r"^```[ \t]*(chart|figure)[ \t]*\n(.*?)\n```[ \t]*$",
+    r"^```[ \t]*(chart|figure|xpost)[ \t]*\n(.*?)\n```[ \t]*$",
     re.MULTILINE | re.DOTALL,
 )
 _MD_LINK_RE = re.compile(r"(?<!\!)\[([^\]\n]+)\]\((https?://[^)\s]+)\)")
@@ -50,6 +50,7 @@ class RichReport:
     charts_marked_illustrative: int = 0
     figures: int = 0
     figures_dropped: int = 0
+    x_posts: int = 0
     tables: int = 0
     diagrams: int = 0
     footnotes: int = 0
@@ -332,6 +333,7 @@ def process_body(
     figure_resolver: FigureResolver | None = None,
     url_checker: Callable[[str], bool] | None = None,
     max_url_checks: int = 25,
+    x_posts: list[dict[str, Any]] | None = None,
 ) -> tuple[str, RichReport]:
     """
     Validate and canonicalise a model-written body.
@@ -344,6 +346,10 @@ def process_body(
     """
     report = RichReport()
     allowed = {normalize_url(u) for u in allowed_urls if u}
+    from src.blog.social import canonical_post_url
+
+    quotable = {canonical_post_url(p["url"]): p for p in (x_posts or [])}
+    allowed |= {normalize_url(u) for u in quotable if u}
 
     def replace_block(m: re.Match[str]) -> str:
         kind, payload = m.group(1), m.group(2)
@@ -353,9 +359,17 @@ def process_body(
             report.notes.append(f"{kind}: invalid JSON ({exc.msg})")
             if kind == "chart":
                 report.charts_dropped += 1
-            else:
+            elif kind == "figure":
                 report.figures_dropped += 1
             return ""
+        if kind == "xpost":
+            # Only a post that was really fetched may be quoted; its words come from X, never from the model.
+            post = quotable.get(canonical_post_url(str(raw.get("url") or ""))) if isinstance(raw, dict) else None
+            if not post:
+                report.notes.append("quoted X post dropped: not one of the posts linked from the sources")
+                return ""
+            report.x_posts += 1
+            return "```xpost\n" + json.dumps(post, indent=2, ensure_ascii=False) + "\n```"
         if kind == "chart":
             spec, note = normalize_chart(raw, allowed)
             if spec is None:
