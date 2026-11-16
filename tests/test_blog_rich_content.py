@@ -4,7 +4,7 @@ import json
 
 from src.blog.prompts import FORMATS, KEYWORD_RULE, WRITE_BODY_PROMPT
 from src.blog.research import ResearchPack, Source, is_public_http_url
-from src.blog.rich_content import normalize_chart, normalize_url, process_body, prose_word_count
+from src.blog.rich_content import drop_advice_sections, normalize_chart, normalize_url, process_body, prose_word_count
 
 SRC = "https://example.org/report"
 
@@ -17,11 +17,13 @@ def test_body_prompt_formats_and_keeps_json_examples():
     for name, fmt in FORMATS.items():
         out = WRITE_BODY_PROMPT.format(
             owner_name="Y", portfolio_url="https://y.site", title="T", angle="A", tags="x", sources="[S1] a",
-            structure=fmt["structure"], first_heading=fmt["first"], keyword_rule=KEYWORD_RULE.format(keyword="gemini 4"),
+            structure=fmt["structure"], keyword_rule=KEYWORD_RULE.format(keyword="gemini 4"),
         )
         assert '{"type": "line"' in out and "[S1] a" in out and "[^1]" in out, name
-        assert f"First line must be `{fmt['first']}`" in out and '"gemini 4"' in out
-        assert "{+an improvement" in out and "==the one number" in out
+        assert '"gemini 4"' in out and "{+an improvement" in out and "==the one number" in out
+        assert "Do not tell the reader what to do" in out and "one independent developer" in out
+        # no format may ask for an advice section (a course teaches, but still has no "what to do next")
+        assert "what to do next" not in str(fmt["structure"]).lower() and "go deeper" not in str(fmt["structure"]).lower()
 
 
 def test_sourced_chart_kept_only_when_source_is_in_pack():
@@ -91,3 +93,19 @@ def test_research_pack_dedupes_and_blocks_private_hosts():
     assert not is_public_http_url("http://127.0.0.1/x")
     assert not is_public_http_url("http://169.254.169.254/latest/meta-data")
     assert not is_public_http_url("file:///etc/passwd")
+
+
+def test_advice_and_wrap_up_sections_are_removed_but_footnotes_survive():
+    md = (
+        "## Gemini 4 Carbon costs more to run\n\nBody.[^1]\n\n"
+        "```python\n## What to do next (inside code, must stay)\n```\n\n"
+        "## What we still do not know\n\nOpen questions.\n\n"
+        "## What to Do Next\n\n- Audit your evals\n- Add holdouts\n\n"
+        "## Key takeaways\n\nShort recap.\n\n"
+        "[^1]: Stated by [DeepMind](https://deepmind.google/x).\n"
+    )
+    body, removed = drop_advice_sections(md)
+    assert removed == ["What to Do Next", "Key takeaways"]
+    assert "Audit your evals" not in body and "Short recap" not in body
+    assert "What we still do not know" in body and "inside code, must stay" in body
+    assert "[^1]: Stated by [DeepMind]" in body

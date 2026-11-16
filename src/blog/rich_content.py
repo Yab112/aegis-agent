@@ -434,3 +434,42 @@ def prose_word_count(body_md: str) -> int:
     """Words a reader reads: fenced blocks (code, chart JSON, diagrams) do not count."""
     prose = "\n".join(t for is_code, t in _split_fences(body_md) if not is_code)
     return len(re.findall(r"\b\w+\b", prose))
+
+
+_ADVICE_HEADING = re.compile(
+    r"^(what (to|you should) do next|next steps?|recommendations?|action items?|key takeaways?|takeaways?|"
+    r"conclusions?|final thoughts|in summary|summary|wrapping up|what should you do)\b",
+    re.IGNORECASE,
+)
+
+
+def drop_advice_sections(body_md: str) -> tuple[str, list[str]]:
+    """
+    Remove `##` sections that tell the reader what to do or merely wrap up ("What to do next",
+    "Key takeaways", "Conclusion"). The site reports news; it does not hand out instructions.
+    Footnote definitions that follow a removed section are kept. Returns (body, removed headings).
+    """
+    parts = _split_fences(body_md)
+    out: list[str] = []
+    removed: list[str] = []
+    skipping = False
+    for is_code, text in parts:
+        if is_code:
+            if not skipping:
+                out.append(text)
+            continue
+        kept: list[str] = []
+        for line in text.split("\n"):
+            heading = re.match(r"^##\s+(.*?)\s*#*\s*$", line)
+            if heading:
+                title = re.sub(r"^[\d.\s:)-]+", "", heading.group(1)).strip(" *_")
+                skipping = bool(_ADVICE_HEADING.match(title))
+                if skipping:
+                    removed.append(heading.group(1))
+                    continue
+            if skipping and not _FOOTNOTE_DEF_RE.match(line):
+                continue
+            kept.append(line)
+        out.append("\n".join(kept))
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip(), removed
+

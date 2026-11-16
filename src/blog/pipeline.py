@@ -26,7 +26,7 @@ from src.blog.prompts import FORMATS, IDEA_PROMPT, KEYWORD_RULE, WRITE_BODY_PROM
 from src.blog.publish_webhook import notify_blog_post_published
 from src.blog.quality import _evaluate_quality_gate, _quality_gate_settings
 from src.blog.research import build_research_pack
-from src.blog.rich_content import process_body, prose_word_count, url_is_live
+from src.blog.rich_content import drop_advice_sections, process_body, prose_word_count, url_is_live
 from src.blog.store import (
     _get_sb_client,
     _pick_pending_blog_idea,
@@ -223,7 +223,6 @@ def run_blog_draft_once(cfg: BlogPipelineConfig, topic: dict[str, Any] | None = 
                     tags=tags_hint,
                     sources=pack.prompt_block(),
                     structure=fmt["structure"],
-                    first_heading=fmt["first"],
                     keyword_rule=KEYWORD_RULE.format(keyword=keyword) if keyword else "",
                 ),
                 generation_config=gen_cfg,
@@ -256,6 +255,10 @@ def run_blog_draft_once(cfg: BlogPipelineConfig, topic: dict[str, Any] | None = 
         figure_resolver=_make_figure_resolver(model, gen_cfg),
         url_checker=url_is_live,
     )
+    if post_format != "course":  # a course teaches; everything else reports
+        body_md, advice = drop_advice_sections(body_md)
+        if advice:
+            rich_report.notes.append("removed advice section(s): " + ", ".join(advice))
     logger.info("blog body validated: %s", rich_report.as_dict())
 
     raw_slug = _slugify_kebab(str(meta.get("slug") or final_title))
