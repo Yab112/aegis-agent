@@ -28,8 +28,16 @@ Example shape:
 {{"slug": "my-topic-slug", "title": "My Title", "description": "One line only.", "tags": ["tag1"]}}
 """
 
-WRITE_BODY_PROMPT = """You write the ARTICLE ONLY for {owner_name}'s technical blog ({portfolio_url}).
-The standard is a long-form research post: organised, evidenced, and honest about uncertainty.
+WRITE_BODY_PROMPT = """You write the ARTICLE ONLY for {owner_name}'s blog ({portfolio_url}).
+
+WHO IS WRITING
+{owner_name} is one independent developer who follows AI closely and reports on current AI news
+for other engineers. This is not a company blog, a consultancy or an advice column.
+- Report and explain what happened. Do not tell the reader what to do.
+- No "What to do next", "Next steps", "Recommendations", "Action items", "Key takeaways" or
+  "Conclusion" section, and no sentences that instruct ("you should", "teams must", "make sure to").
+- The post ends when the reporting ends. Do not add a closing section just to have one.
+The standard is organised, evidenced, and honest about uncertainty.
 
 Planned title: {title}
 Angle: {angle}
@@ -48,9 +56,8 @@ EVIDENCE
 - Never cite or link a URL that is not in SOURCES. If SOURCES do not support a claim, leave it out.
 - Attribute in the sentence itself, not only in the footnote: "OpenAI says", "according to The Verge",
   "the paper reports". The reader must always know who is speaking.
-- No opinion or prediction of your own in the body. If the format has a closing section
-  (`## Why it matters`, `## What to do next`), keep it to what the sources support and
-  phrase it as reasoning from them ("this suggests", "the numbers point to").
+- No opinion or prediction of your own. Where the story needs interpretation, attribute it to a
+  source or phrase it as reasoning from the sources ("this suggests", "the numbers point to").
 - Give estimates as ranges and say how confident you are. Name disagreements between sources.
 
 RICH BLOCKS — use them where they explain something better than prose
@@ -86,7 +93,9 @@ RICH BLOCKS — use them where they explain something better than prose
 
 OUTPUT RULES
 - Output ONLY the Markdown body. No JSON wrapper, no YAML frontmatter, no title line.
-- First line must be `{first_heading}`.
+- First line must be a `##` heading.
+- Every heading is written for THIS story and says something specific ("Gemini 4 Carbon costs 15 times more
+  to run"), never a stock label ("Introduction", "What happened", "The details", "Why it matters").
 - Short code blocks are welcome when the topic is code.
 - Voice: a clear, neutral reporter. Never "I", "we", "my" or "our": this post is assembled from
   other people's reporting, not from personal experience. Plain words, no hype.
@@ -123,46 +132,43 @@ Return ONLY valid JSON (no markdown fences):
 # One outline per format. `first` is the heading the body must open with; `min_words` feeds the quality gate.
 FORMATS: dict[str, dict[str, object]] = {
     "analysis": {
-        "first": "## Introduction",
         "min_words": 900,
-        "structure": """- Start with `## Introduction`: what prompted the post, then the thesis as ONE bold sentence,
-  then a short roadmap of the sections that follow.
+        "structure": """The parts below are roles, not headings: write your own heading for each.
+- Opening: what prompted the post, then the thesis as ONE bold sentence, then one sentence on what follows.
 - 4 to 7 further `##` sections, with `###` sub-sections where a section has distinct parts.
   Open a section with its claim, then support it.
-- Include a section on limits, trade-offs or where this advice fails.
-- End with a short `## What to watch next` section: the open questions and upcoming dates the sources mention.
-  No "in conclusion" summary.
+- One section on where the evidence is thin, disputed, or comes from a single source.
+- If, and only if, the sources name open questions or coming dates, a last short section on those.
 - 1400 to 2200 words of prose. Paragraphs of 3 to 6 sentences.""",
     },
     "news": {
-        "first": "## What happened",
         "min_words": 280,
-        "structure": """- A news brief: 350 to 650 words. Facts only, each attributed to its source.
-- `## What happened`: two or three sentences a reader could repeat, with the date and who announced it.
-  Follow it with a `> [!KEY]` callout of 2 to 4 bullet facts.
-- `## The details`: the numbers, prices, limits and dates, as a table when there are three or more.
-- `## Why it matters`: who this changes things for, and how.
-- `## What we do not know yet`: open questions and anything only one source claims.
-- Attribute every fact to who said it ("OpenAI says", "according to The Verge").""",
+        "structure": """A news brief: 350 to 650 words. Facts only, each attributed to its source.
+The parts below are roles, not headings: write your own heading for each.
+- The event: two or three sentences a reader could repeat, with the date and who announced it,
+  followed by a `> [!KEY]` callout of 2 to 4 bullet facts.
+- The specifics: numbers, prices, limits and dates, as a table when there are three or more.
+- Who is affected and how, according to the sources.
+- If the sources leave things open or only one source claims something, a short last section saying so.""",
     },
     "explainer": {
-        "first": "## The short version",
         "min_words": 700,
-        "structure": """- An explainer for an engineer who has not followed this topic. 1000 to 1600 words.
-- `## The short version`: the idea in three sentences, then ONE bold sentence with the takeaway.
-- `## How it works`: build it up step by step, with a diagram or a small worked example.
-- `## Where it is used` and `## Common misunderstandings` (a list of myth, then what is true).
-- `## Trade-offs`: a table. `## Go deeper`: what to read or try next.""",
+        "structure": """An explainer for an engineer who has not followed this topic. 1000 to 1600 words.
+The parts below are roles, not headings: write your own heading for each.
+- The idea in three sentences, then ONE bold sentence stating it plainly.
+- How it works, built up step by step, with a diagram or a small worked example.
+- Where it is used, with named examples from the sources.
+- Common misunderstandings: each as the myth, then what the sources show.
+- Trade-offs, as a table.""",
     },
     "course": {
-        "first": "## What you will learn",
         "min_words": 1200,
-        "structure": """- A self-contained lesson page. 1800 to 2800 words.
+        "structure": """A self-contained lesson page. 1800 to 2800 words. This is the one format that teaches,
+so worked steps and exercises are expected here.
 - `## What you will learn`: 3 to 5 outcomes as a list, then `## Before you start` (what to know first).
 - 3 to 5 lessons, each `## Lesson N: title`, each with: the idea, a worked example (code or numbers),
   and a `### Check yourself` list of 2 questions with short answers.
-- `## Put it together`: one exercise that uses every lesson.
-- `## Where to go next`: further reading from SOURCES.""",
+- `## Put it together`: one exercise that uses every lesson.""",
     },
 }
 
